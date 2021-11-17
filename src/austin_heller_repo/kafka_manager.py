@@ -1,3 +1,4 @@
+from __future__ import annotations
 from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition
 from concurrent.futures import Future
@@ -13,6 +14,12 @@ class AddTopicException(Exception):
 
 
 class RemoveTopicException(Exception):
+
+	def __init__(self, *args):
+		super().__init__(*args)
+
+
+class TopicNotFoundException(Exception):
 
 	def __init__(self, *args):
 		super().__init__(*args)
@@ -34,6 +41,77 @@ class ReadMessageException(Exception):
 
 	def __init__(self, *args):
 		super().__init__(*args)
+
+
+class ReplicatedBrokersTotalMismatchException(Exception):
+
+	def __init__(self, *args):
+		super().__init__(*args)
+
+
+class KafkaWrapper():
+
+	def __init__(self, *, host_url: str, host_port: int):
+
+		self.__host_url = host_url
+		self.__host_port = host_port
+
+		self.__admin_client = None  # type: AdminClient
+		self.__admin_client_semaphore = Semaphore()
+		self.__async_producer = None  # type: Producer
+		self.__async_producer_semaphore = Semaphore()
+		self.__consumers = []  # type: List[Consumer]
+		self.__consumers_semaphore = Semaphore()
+		self.__write_transaction = None
+
+	def __get_bootstrap_servers(self) -> str:
+		return f"{self.__host_url}:{self.__host_port}"
+
+	def get_admin_client(self) -> AdminClient:
+
+		self.__admin_client_semaphore.acquire()
+		if self.__admin_client is None:
+			self.__admin_client = AdminClient({
+				"bootstrap.servers": self.__get_bootstrap_servers()
+			})
+		self.__admin_client_semaphore.release()
+		return self.__admin_client
+
+	def get_producer(self, *, is_transactional: bool) -> Producer:
+
+		if is_transactional:
+			producer = Producer({
+				"bootstrap.servers": self.__get_bootstrap_servers(),
+				"transactional.id": str(uuid.uuid4())
+			})
+			producer.init_transactions()
+			producer.begin_transaction()
+		else:
+			self.__async_producer_semaphore.acquire()
+			if self.__async_producer is None:
+				self.__async_producer = Producer({
+					"bootstrap.servers": self.__get_bootstrap_servers()
+				})
+			self.__async_producer_semaphore.release()
+			producer = self.__async_producer
+		return producer
+
+	def get_consumer(self, *, topic_name: str, group_name: str, is_from_beginning: bool):
+
+		if topic_name.startswith("^"):
+			raise ReadMessageException(f"topic_name cannot start with \"^\" character.")
+		self.__consumers_semaphore.acquire()
+		consumer = Consumer({
+			"bootstrap.servers": self.__get_bootstrap_servers(),
+			"group.id": group_name,
+			"auto.offset.reset": "earliest" if is_from_beginning else "latest",
+			"queued.min.messages": 1
+		})
+
+		consumer.subscribe([topic_name])
+		self.__consumers.append(consumer)
+		self.__consumers_semaphore.release()
+		return consumer
 
 
 class AsyncHandle():
@@ -152,77 +230,113 @@ class KafkaReader():
 		return async_handle
 
 
+class KafkaPartition():
+
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, kafka_partition_id: int, topic_name: str, leader_broker_id: int, replicated_broker_ids: List[int]):
+
+		self.__kafka_wrapper = kafka_wrapper
+		self.__kafka_partition_id = kafka_partition_id
+		self.__topic_name = topic_name
+		self.__leader_broker_id = leader_broker_id
+		self.__replicated_broker_ids = replicated_broker_ids
+
+	def get_topic_name(self) -> str:
+		return self.__topic_name
+
+	def get_leader_broker(self) -> KafkaBroker:
+
+		admin_client = self.__kafka_wrapper.get_admin_client()
+
+		topic_list = admin_client.list_topics()
+
+		# TODO exception if missing broker
+
+		kafka_broker = KafkaBroker(
+			kafka_wrapper=self.__kafka_wrapper,
+			kafka_broker_id=self.__leader_broker_id,
+			host_url=topic_list.brokers[self.__leader_broker_id].host,
+			host_port=topic_list.brokers[self.__leader_broker_id].port
+		)
+		return kafka_broker
+
+	def get_replicated_brokers(self) -> List[KafkaBroker]:
+
+		admin_client = self.__kafka_wrapper.get_admin_client()
+
+		topic_list = admin_client.list_topics()
+
+		kafka_brokers = []  # type: List[KafkaBroker]
+		for kafka_broker_id in topic_list.brokers:
+			if kafka_broker_id in self.__replicated_broker_ids:
+				kafka_broker = KafkaBroker(
+					kafka_wrapper=self.__kafka_wrapper,
+					kafka_broker_id=kafka_broker_id,
+					host_url=topic_list.brokers[kafka_broker_id].host,
+					host_port=topic_list.brokers[kafka_broker_id].port
+				)
+				kafka_brokers.append(kafka_broker)
+		if len(self.__replicated_broker_ids) != len(kafka_brokers):
+			raise ReplicatedBrokersTotalMismatchException(f"Expected {len(self.__replicated_broker_ids)} based on partition details but found {len(kafka_brokers)}.")
+		else:
+			return kafka_brokers
+
+	def is_exist(self) -> bool:
+		# TODO return if broker still exists
+		raise NotImplementedError()
+
+	def refresh(self):
+		# TODO throw exception if not exists
+		# TODO refresh leader and replicated brokers
+		raise NotImplementedError()
+
+
+class KafkaBroker():
+
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, kafka_broker_id: int, host_url: str, host_port: int):
+
+		self.__kafka_wrapper = kafka_wrapper
+		self.__kafka_broker_id = kafka_broker_id
+		self.__host_url = host_url
+		self.__host_port = host_port
+
+	def get_host_url(self) -> str:
+		return self.__host_url
+
+	def get_host_port(self) -> int:
+		return self.__host_port
+
+	def get_partition_per_topic(self) -> Dict[str, KafkaPartition]:
+
+		admin_client = self.__kafka_wrapper.get_admin_client()
+
+		topic_list = admin_client.list_topics()
+
+		kafka_partition_per_topic = {}  # type: Dict[str, KafkaPartition]
+		for topic_name in topic_list.topics:
+			for kafka_partition_id in topic_list[topic_name].partitions:
+				if self.__kafka_broker_id in topic_list[topic_name].partitions[kafka_partition_id].replicas:
+					kafka_partition_per_topic[topic_name] = KafkaPartition(
+						kafka_wrapper=self.__kafka_wrapper,
+						kafka_partition_id=kafka_partition_id,
+						topic_name=topic,
+						leader_broker_id=topic_list[topic_name].partitions[kafka_partition_id].leader,
+						replicated_broker_ids=topic_list[topic_name].partitions[kafka_partition_id].replicas
+					)
+		return kafka_partition_per_topic
+
+	def is_exist(self) -> bool:
+		# TODO return if broker still exists
+		raise NotImplementedError()
+
+
 # TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
 class KafkaManager():
 
-	def __init__(self, *, host_url: str, host_port: int, read_polling_seconds: float, cluster_propagation_seconds: float):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, cluster_propagation_seconds: float):
 
-		self.__host_url = host_url
-		self.__host_port = host_port
+		self.__kafka_wrapper = kafka_wrapper
 		self.__read_polling_seconds = read_polling_seconds
 		self.__cluster_propagation_seconds = cluster_propagation_seconds
-
-		self.__admin_client = None  # type: AdminClient
-		self.__admin_client_semaphore = Semaphore()
-		self.__async_producer = None  # type: Producer
-		self.__async_producer_semaphore = Semaphore()
-		self.__consumers = []  # type: List[Consumer]
-		self.__consumers_semaphore = Semaphore()
-		self.__write_transaction = None
-
-	def __get_bootstrap_servers(self) -> str:
-		return f"{self.__host_url}:{self.__host_port}"
-
-	def __get_admin_client(self) -> AdminClient:
-
-		self.__admin_client_semaphore.acquire()
-		if self.__admin_client is None:
-			self.__admin_client = AdminClient({
-				"bootstrap.servers": self.__get_bootstrap_servers()
-			})
-		self.__admin_client_semaphore.release()
-		return self.__admin_client
-
-	def __get_producer(self, *, is_transactional: bool) -> Producer:
-
-		if is_transactional:
-			producer = Producer({
-				"bootstrap.servers": self.__get_bootstrap_servers(),
-				"transactional.id": str(uuid.uuid4())
-			})
-			producer.init_transactions()
-			producer.begin_transaction()
-		else:
-			self.__async_producer_semaphore.acquire()
-			if self.__async_producer is None:
-				self.__async_producer = Producer({
-					"bootstrap.servers": self.__get_bootstrap_servers()
-				})
-			self.__async_producer_semaphore.release()
-			producer = self.__async_producer
-		return producer
-
-	def __get_consumer(self, *, topic_name: str, group_name: str, is_from_beginning: bool):
-
-		if topic_name.startswith("^"):
-			raise ReadMessageException(f"topic_name cannot start with \"^\" character.")
-		self.__consumers_semaphore.acquire()
-		consumer = Consumer({
-			"bootstrap.servers": self.__get_bootstrap_servers(),
-			"group.id": group_name,
-			"auto.offset.reset": "earliest" if is_from_beginning else "latest",
-			"queued.min.messages": 1
-		})
-
-		consumer.subscribe([topic_name])
-		self.__consumers.append(consumer)
-		self.__consumers_semaphore.release()
-		return consumer
-
-	def __wait_for_cluster_propagation(self):
-
-		admin_client = self.__get_admin_client()
-		admin_client.poll(self.__cluster_propagation_seconds)
 
 	def add_topic(self, *, topic_name: str, partition_total: int, replication_factor: int) -> AsyncHandle:
 
@@ -230,7 +344,7 @@ class KafkaManager():
 			raise AddTopicException("topic_name cannot start with \"__\".")
 		else:
 
-			admin_client = self.__get_admin_client()
+			admin_client = self.__kafka_wrapper.get_admin_client()
 
 			topic = NewTopic(topic_name, partition_total, replication_factor)
 
@@ -260,13 +374,13 @@ class KafkaManager():
 
 			return async_handle
 
-	def remove_topic(self, *, topic_name: str, cluster_propagation_blocking_timeout_seconds: float = 0):
+	def remove_topic(self, *, topic_name: str, cluster_propagation_blocking_timeout_seconds: float = 0) -> AsyncHandle:
 
 		if topic_name.startswith("__"):
 			raise RemoveTopicException("topic_name cannot start with \"__\".")
 		else:
 
-			admin_client = self.__get_admin_client()
+			admin_client = self.__kafka_wrapper.get_admin_client()
 
 			future_per_topic = admin_client.delete_topics([topic_name], operation_timeout=cluster_propagation_blocking_timeout_seconds)  # type: Dict[NewTopic, Future]
 
@@ -296,17 +410,57 @@ class KafkaManager():
 
 	def get_topics(self) -> Tuple[str]:
 
-		admin_client = self.__get_admin_client()
+		admin_client = self.__kafka_wrapper.get_admin_client()
 
-		topics_per_topic_name = admin_client.list_topics().topics
+		topic_list = admin_client.list_topics()
+
+		topics_per_topic_name = topic_list.topics
 
 		topics = tuple([topic_name for topic_name in topics_per_topic_name.keys() if not topic_name.startswith("__")])
 
 		return topics
 
+	def get_partitions(self, *, topic_name: str) -> List[KafkaPartition]:
+
+		admin_client = self.__kafka_wrapper.get_admin_client()
+
+		topic_list = admin_client.list_topics()
+
+		if topic_name not in topic_list.keys():
+			raise TopicNotFoundException(f"Topic name: \"{topic_name}\".")
+
+		kafka_partitions = []  # type: List[KafkaPartition]
+		for partition_kafka_id in topic_list.topics[topic_name].partitions:
+			kafka_partition = KafkaPartition(
+				kafka_wrapper=self.__kafka_wrapper,
+				kafka_partition_id=partition_kafka_id,
+				topic_name=topic_name,
+				leader_broker_id=topic_list.topics[topic_name].partitions[partition_kafka_id].leader,
+				replicated_broker_ids=topic_list.topics[topic_name].partitions[partition_kafka_id].replicas
+			)
+			kafka_partitions.append(kafka_partition)
+		return kafka_partitions
+
+	def get_brokers(self) -> List[KafkaBroker]:
+
+		admin_client = self.__kafka_wrapper.get_admin_client()
+
+		topic_list = admin_client.list_topics()
+
+		kafka_brokers = []  # type: List[KafkaBroker]
+		for kafka_broker_id in topic_list.brokers:
+			kafka_broker = KafkaBroker(
+				kafka_wrapper=self.__kafka_wrapper,
+				kafka_broker_id=kafka_broker_id,
+				host_url=topic_list.brokers[kafka_broker_id].host,
+				host_port=topic_list.brokers[kafka_broker_id].port
+			)
+			kafka_brokers.append(kafka_broker)
+		return kafka_brokers
+
 	def get_async_writer(self) -> KafkaAsyncWriter:
 
-		producer = self.__get_producer(
+		producer = self.__kafka_wrapper.get_producer(
 			is_transactional=False
 		)
 		return KafkaAsyncWriter(
@@ -315,7 +469,7 @@ class KafkaManager():
 
 	def get_transactional_writer(self) -> KafkaTransactionalWriter:
 
-		producer = self.__get_producer(
+		producer = self.__kafka_wrapper.get_producer(
 			is_transactional=True
 		)
 		return KafkaTransactionalWriter(
@@ -324,7 +478,7 @@ class KafkaManager():
 
 	def get_reader(self, *, topic_name: str, group_name: str, is_from_beginning: bool) -> KafkaReader:
 
-		consumer = self.__get_consumer(
+		consumer = self.__kafka_wrapper.get_consumer(
 			topic_name=topic_name,
 			group_name=group_name,
 			is_from_beginning=is_from_beginning

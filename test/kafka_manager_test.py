@@ -1,5 +1,5 @@
 import unittest
-from src.austin_heller_repo.kafka_manager import KafkaManager, AsyncHandle, KafkaReader
+from src.austin_heller_repo.kafka_manager import KafkaManager, AsyncHandle, KafkaReader, KafkaWrapper
 from austin_heller_repo.threading import start_thread, Semaphore
 import uuid
 import time
@@ -13,9 +13,13 @@ class KafkaManagerTest(unittest.TestCase):
 
 		print(f"setUp: started: {datetime.utcnow()}")
 
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
 			cluster_propagation_seconds=30
 		)
@@ -43,9 +47,13 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_initialize(self):
 
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
 			cluster_propagation_seconds=30
 		)
@@ -54,9 +62,13 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_list_all_topics(self):
 
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
 			cluster_propagation_seconds=30
 		)
@@ -67,22 +79,20 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual((), topics)
 
-	def test_add_topic(self):
+	def test_add_and_remove_topic(self):
 
-		print(f"test_add_topic: start: {datetime.utcnow()}")
-
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=0
+			host_port=9092
 		)
 
-		print(f"test_add_topic: initialized: {datetime.utcnow()}")
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
+			read_polling_seconds=1.0,
+			cluster_propagation_seconds=30
+		)
 
 		topic_name = str(uuid.uuid4())
-
-		print(f"topic_name: {topic_name}")
 
 		add_topic_async_handle = kafka_manager.add_topic(
 			topic_name=topic_name,
@@ -96,15 +106,28 @@ class KafkaManagerTest(unittest.TestCase):
 
 		topics = kafka_manager.get_topics()
 
-		print(f"topics: {topics}")
-
 		self.assertEqual((topic_name,), topics)
+
+		removed_topic_name = kafka_manager.remove_topic(
+			topic_name=topic_name,
+			cluster_propagation_blocking_timeout_seconds=5
+		).get_result()
+
+		self.assertEqual(topic_name, removed_topic_name)
+
+		topics = kafka_manager.get_topics()
+
+		self.assertEqual((), topics)
 
 	def test_write_and_read_from_topic_transactional(self):
 
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
 			cluster_propagation_seconds=30
 		)
@@ -231,9 +254,13 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_write_and_read_from_topic_async(self):
 
-		kafka_manager = KafkaManager(
+		kafka_wrapper = KafkaWrapper(
 			host_url="0.0.0.0",
-			host_port=9092,
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
 			cluster_propagation_seconds=30
 		)
