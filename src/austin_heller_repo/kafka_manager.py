@@ -152,6 +152,7 @@ class KafkaReader():
 		return async_handle
 
 
+# TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
 class KafkaManager():
 
 	def __init__(self, *, host_url: str, host_port: int, read_polling_seconds: float, cluster_propagation_seconds: float):
@@ -209,8 +210,10 @@ class KafkaManager():
 		consumer = Consumer({
 			"bootstrap.servers": self.__get_bootstrap_servers(),
 			"group.id": group_name,
-			"auto.offset.reset": "earliest" if is_from_beginning else "latest"
+			"auto.offset.reset": "earliest" if is_from_beginning else "latest",
+			"queued.min.messages": 1
 		})
+
 		consumer.subscribe([topic_name])
 		self.__consumers.append(consumer)
 		self.__consumers_semaphore.release()
@@ -326,6 +329,7 @@ class KafkaManager():
 			group_name=group_name,
 			is_from_beginning=is_from_beginning
 		)
+
 		return KafkaReader(
 			consumer=consumer,
 			read_polling_seconds=self.__read_polling_seconds

@@ -1,9 +1,10 @@
 import unittest
 from src.austin_heller_repo.kafka_manager import KafkaManager, AsyncHandle, KafkaReader
-from austin_heller_repo.threading import start_thread
+from austin_heller_repo.threading import start_thread, Semaphore
 import uuid
 import time
 from datetime import datetime
+from typing import List, Tuple, Dict
 
 
 class KafkaManagerTest(unittest.TestCase):
@@ -154,14 +155,16 @@ class KafkaManagerTest(unittest.TestCase):
 				is_from_beginning=False
 			)
 
-		expected_message = b"hello world"
 		expected_written_message = None
 		expected_written_message_async_handles = []  # type: List[AsyncHandle]
+		expected_messages = []  # type: List[bytes]
+		expected_messages_semaphore = Semaphore()
 
 		def write_expected_thread_method():
-			nonlocal expected_message
 			nonlocal expected_written_message
 			nonlocal expected_written_message_async_handles
+			nonlocal expected_messages
+			nonlocal expected_messages_semaphore
 
 			for index in range(10):
 				kafka_writer = kafka_manager.get_transactional_writer()
@@ -176,18 +179,27 @@ class KafkaManagerTest(unittest.TestCase):
 			for expected_written_message_async_handle in expected_written_message_async_handles:
 				expected_written_message = expected_written_message_async_handle.get_result()
 				print(f"written_message: {expected_written_message}")
+				expected_messages_semaphore.acquire()
+				expected_messages.append(expected_written_message)
+				expected_messages_semaphore.release()
 
 		read_message = None
+		read_messages = []  # type: List[bytes]
+		read_messages_semaphore = Semaphore()
 
 		def read_thread_method():
-			nonlocal expected_message
 			nonlocal read_message
+			nonlocal read_messages
+			nonlocal read_messages_semaphore
 
 			print("reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"getting result")
 			read_message = kafka_reader_async_handle.get_result()
 			print(f"read message: {read_message}")
+			read_messages_semaphore.acquire()
+			read_messages.append(read_message)
+			read_messages_semaphore.release()
 
 		write_unexpected_thread = start_thread(write_unexpected_thread_method)
 
@@ -202,6 +214,8 @@ class KafkaManagerTest(unittest.TestCase):
 			read_thread = start_thread(read_thread_method)
 			read_threads.append(read_thread)
 
+		time.sleep(10)
+
 		write_expected_thread = start_thread(write_expected_thread_method)
 
 		write_expected_thread.join()
@@ -210,8 +224,10 @@ class KafkaManagerTest(unittest.TestCase):
 			read_thread.join()
 
 		self.assertEqual(unexpected_message, unexpected_written_message)
-		self.assertEqual(expected_message, expected_written_message)
-		self.assertEqual(expected_message, read_message)
+		for expected_message in expected_messages:
+			self.assertIn(expected_message, read_messages)
+		for read_message in read_messages:
+			self.assertIn(read_message, expected_messages)
 
 	def test_write_and_read_from_topic_async(self):
 
@@ -266,40 +282,50 @@ class KafkaManagerTest(unittest.TestCase):
 				is_from_beginning=False
 			)
 
-		expected_message = b"hello world"
 		expected_written_message = None
 		expected_written_message_async_handles = []  # type: List[AsyncHandle]
+		expected_messages = []  # type: List[bytes]
+		expected_messages_semaphore = Semaphore()
 
 		def write_expected_thread_method():
-			nonlocal expected_message
 			nonlocal expected_written_message
 			nonlocal expected_written_message_async_handles
+			nonlocal expected_messages
+			nonlocal expected_messages_semaphore
 
 			for index in range(10):
-				kafka_writer = kafka_manager.get_transactional_writer()
+				kafka_writer = kafka_manager.get_async_writer()
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
 					partition_index=0,
 					message_bytes=f"message #{index}".encode()
 				)
-				kafka_writer.end_write_transaction()
 				expected_written_message_async_handles.append(write_message_async_handle)
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
 				expected_written_message = expected_written_message_async_handle.get_result()
 				print(f"written_message: {expected_written_message}")
+				expected_messages_semaphore.acquire()
+				expected_messages.append(expected_written_message)
+				expected_messages_semaphore.release()
 
 		read_message = None
+		read_messages = []  # type: List[bytes]
+		read_messages_semaphore = Semaphore()
 
 		def read_thread_method():
-			nonlocal expected_message
 			nonlocal read_message
+			nonlocal read_messages
+			nonlocal read_messages_semaphore
 
 			print("reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"getting result")
 			read_message = kafka_reader_async_handle.get_result()
 			print(f"read message: {read_message}")
+			read_messages_semaphore.acquire()
+			read_messages.append(read_message)
+			read_messages_semaphore.release()
 
 		write_unexpected_thread = start_thread(write_unexpected_thread_method)
 
@@ -314,6 +340,9 @@ class KafkaManagerTest(unittest.TestCase):
 			read_thread = start_thread(read_thread_method)
 			read_threads.append(read_thread)
 
+		# wait for the readers to have a change to poll, causing them to be assigned
+		time.sleep(10)
+
 		write_expected_thread = start_thread(write_expected_thread_method)
 
 		write_expected_thread.join()
@@ -322,5 +351,7 @@ class KafkaManagerTest(unittest.TestCase):
 			read_thread.join()
 
 		self.assertEqual(unexpected_message, unexpected_written_message)
-		self.assertEqual(expected_message, expected_written_message)
-		self.assertEqual(expected_message, read_message)
+		for expected_message in expected_messages:
+			self.assertIn(expected_message, read_messages)
+		for read_message in read_messages:
+			self.assertIn(read_message, expected_messages)
