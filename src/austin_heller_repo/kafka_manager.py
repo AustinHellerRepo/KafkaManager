@@ -5,6 +5,7 @@ from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
 from austin_heller_repo.threading import Semaphore
 import uuid
+import random
 
 
 class AddTopicException(Exception):
@@ -127,11 +128,12 @@ class AsyncHandle():
 
 class KafkaAsyncWriter():
 
-	def __init__(self, *, producer: Producer):
+	def __init__(self, *, kafka_manager: KafkaManager, producer: Producer):
 
+		self.__kafka_manager = kafka_manager
 		self.__producer = producer
 
-	def write_message(self, *, topic_name: str, partition_index: int, message_bytes: bytes) -> AsyncHandle:
+	def write_message(self, *, topic_name: str, message_bytes: bytes) -> AsyncHandle:
 
 		if not isinstance(message_bytes, bytes):
 			raise WriteMessageException("message_bytes object must be of type \"bytes\".")
@@ -169,7 +171,13 @@ class KafkaAsyncWriter():
 
 			callback_semaphore.release()
 
-		self.__producer.produce(topic_name, message_bytes, partition=partition_index, callback=callback)
+		kafka_partitions = self.__kafka_manager.get_partitions(
+			topic_name=topic_name
+		)
+
+		random_partition_index = random.randrange(len(kafka_partitions))
+
+		self.__producer.produce(topic_name, message_bytes, partition=random_partition_index, callback=callback)
 
 		async_handle = AsyncHandle(
 			get_result_method=get_result_method
@@ -180,19 +188,20 @@ class KafkaAsyncWriter():
 
 class KafkaTransactionalWriter():
 
-	def __init__(self, *, producer: Producer):
+	def __init__(self, *, kafka_manager: KafkaManager, producer: Producer):
 
+		self.__kafka_manager = kafka_manager
 		self.__producer = producer
 
 		self.__kafka_async_writer = KafkaAsyncWriter(
+			kafka_manager=kafka_manager,
 			producer=producer
 		)
 
-	def write_message(self, *, topic_name: str, partition_index: int, message_bytes: bytes) -> AsyncHandle:
+	def write_message(self, *, topic_name: str, message_bytes: bytes) -> AsyncHandle:
 
 		return self.__kafka_async_writer.write_message(
 			topic_name=topic_name,
-			partition_index=partition_index,
 			message_bytes=message_bytes
 		)
 
@@ -318,7 +327,7 @@ class KafkaBroker():
 					kafka_partition_per_topic[topic_name] = KafkaPartition(
 						kafka_wrapper=self.__kafka_wrapper,
 						kafka_partition_id=kafka_partition_id,
-						topic_name=topic,
+						topic_name=topic_name,
 						leader_broker_id=topic_list[topic_name].partitions[kafka_partition_id].leader,
 						replicated_broker_ids=topic_list[topic_name].partitions[kafka_partition_id].replicas
 					)
@@ -332,13 +341,16 @@ class KafkaBroker():
 # TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
 class KafkaManager():
 
-	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, cluster_propagation_seconds: float):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, cluster_propagation_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
 
 		self.__kafka_wrapper = kafka_wrapper
 		self.__read_polling_seconds = read_polling_seconds
 		self.__cluster_propagation_seconds = cluster_propagation_seconds
+		self.__new_topic_partitions_total = new_topic_partitions_total
+		self.__new_topic_replication_factor = new_topic_replication_factor
+		self.__remove_topic_cluster_propagation_blocking_timeout_seconds = remove_topic_cluster_propagation_blocking_timeout_seconds
 
-	def add_topic(self, *, topic_name: str, partition_total: int, replication_factor: int) -> AsyncHandle:
+	def add_topic(self, *, topic_name: str) -> AsyncHandle:
 
 		if topic_name.startswith("__"):
 			raise AddTopicException("topic_name cannot start with \"__\".")
@@ -346,7 +358,7 @@ class KafkaManager():
 
 			admin_client = self.__kafka_wrapper.get_admin_client()
 
-			topic = NewTopic(topic_name, partition_total, replication_factor)
+			topic = NewTopic(topic_name, self.__new_topic_partitions_total, self.__new_topic_replication_factor)
 
 			future_per_topic = admin_client.create_topics([topic])  # type: Dict[NewTopic, Future]
 
@@ -374,7 +386,7 @@ class KafkaManager():
 
 			return async_handle
 
-	def remove_topic(self, *, topic_name: str, cluster_propagation_blocking_timeout_seconds: float = 0) -> AsyncHandle:
+	def remove_topic(self, *, topic_name: str) -> AsyncHandle:
 
 		if topic_name.startswith("__"):
 			raise RemoveTopicException("topic_name cannot start with \"__\".")
@@ -382,7 +394,7 @@ class KafkaManager():
 
 			admin_client = self.__kafka_wrapper.get_admin_client()
 
-			future_per_topic = admin_client.delete_topics([topic_name], operation_timeout=cluster_propagation_blocking_timeout_seconds)  # type: Dict[NewTopic, Future]
+			future_per_topic = admin_client.delete_topics([topic_name], operation_timeout=self.__remove_topic_cluster_propagation_blocking_timeout_seconds)  # type: Dict[NewTopic, Future]
 
 			removed_topic = None  # type: NewTopic
 
@@ -464,6 +476,7 @@ class KafkaManager():
 			is_transactional=False
 		)
 		return KafkaAsyncWriter(
+			kafka_manager=self,
 			producer=producer
 		)
 
@@ -473,6 +486,7 @@ class KafkaManager():
 			is_transactional=True
 		)
 		return KafkaTransactionalWriter(
+			kafka_manager=self,
 			producer=producer
 		)
 
