@@ -362,7 +362,7 @@ class KafkaManager():
 
 			topic = NewTopic(topic_name, self.__new_topic_partitions_total, self.__new_topic_replication_factor)
 
-			future_per_topic = admin_client.create_topics([topic], operation_timeout=self.__cluster_propagation_seconds)  # type: Dict[NewTopic, Future]
+			future_per_topic = admin_client.create_topics([topic])  # type: Dict[NewTopic, Future]
 
 			added_topic = None  # type: NewTopic
 
