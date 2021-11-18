@@ -6,6 +6,8 @@ from typing import List, Tuple, Dict, Callable
 from austin_heller_repo.threading import Semaphore
 import uuid
 import random
+import time
+import itertools
 
 
 class AddTopicException(Exception):
@@ -360,7 +362,7 @@ class KafkaManager():
 
 			topic = NewTopic(topic_name, self.__new_topic_partitions_total, self.__new_topic_replication_factor)
 
-			future_per_topic = admin_client.create_topics([topic])  # type: Dict[NewTopic, Future]
+			future_per_topic = admin_client.create_topics([topic], operation_timeout=self.__cluster_propagation_seconds)  # type: Dict[NewTopic, Future]
 
 			added_topic = None  # type: NewTopic
 
@@ -377,6 +379,19 @@ class KafkaManager():
 					future.result()
 
 					added_topic = topic
+
+					verification_delay_seconds = 0.01
+					maximum_verification_iterations_total = int(self.__cluster_propagation_seconds / verification_delay_seconds)
+					is_verified = False
+					for verification_index in range(maximum_verification_iterations_total):
+						all_topics = self.get_topics()
+						if added_topic not in all_topics:
+							time.sleep(verification_delay_seconds)
+						else:
+							is_verified = True
+							break
+					if not is_verified:
+						raise AddTopicException(f"Failed to verify topic exists after {self.__cluster_propagation_seconds} seconds.")
 
 				return added_topic
 
@@ -438,7 +453,7 @@ class KafkaManager():
 
 		topic_list = admin_client.list_topics()
 
-		if topic_name not in topic_list.keys():
+		if topic_name not in topic_list.topics.keys():
 			raise TopicNotFoundException(f"Topic name: \"{topic_name}\".")
 
 		kafka_partitions = []  # type: List[KafkaPartition]

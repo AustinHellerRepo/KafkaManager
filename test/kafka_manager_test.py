@@ -21,7 +21,10 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		print(f"setUp: initialized: {datetime.utcnow()}")
@@ -35,8 +38,7 @@ class KafkaManagerTest(unittest.TestCase):
 			print(f"setUp: topic: {topic}: {datetime.utcnow()}")
 
 			async_handle = kafka_manager.remove_topic(
-				topic_name=topic,
-				cluster_propagation_blocking_timeout_seconds=30
+				topic_name=topic
 			)
 
 			print(f"setUp: async: {topic}: {datetime.utcnow()}")
@@ -55,7 +57,10 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		self.assertIsNotNone(kafka_manager)
@@ -70,7 +75,10 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		topics = kafka_manager.get_topics()
@@ -89,15 +97,16 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		topic_name = str(uuid.uuid4())
 
 		add_topic_async_handle = kafka_manager.add_topic(
-			topic_name=topic_name,
-			partition_total=1,
-			replication_factor=1
+			topic_name=topic_name
 		)
 
 		added_topic_name = add_topic_async_handle.get_result()
@@ -109,8 +118,7 @@ class KafkaManagerTest(unittest.TestCase):
 		self.assertEqual((topic_name,), topics)
 
 		removed_topic_name = kafka_manager.remove_topic(
-			topic_name=topic_name,
-			cluster_propagation_blocking_timeout_seconds=5
+			topic_name=topic_name
 		).get_result()
 
 		self.assertEqual(topic_name, removed_topic_name)
@@ -129,7 +137,10 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		topic_name = str(uuid.uuid4())
@@ -137,9 +148,7 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"topic_name: {topic_name}")
 
 		kafka_manager.add_topic(
-			topic_name=topic_name,
-			partition_total=1,
-			replication_factor=1
+			topic_name=topic_name
 		).get_result()
 
 		group_name = str(uuid.uuid4())
@@ -157,7 +166,6 @@ class KafkaManagerTest(unittest.TestCase):
 
 			write_message_async_handle = kafka_writer.write_message(
 				topic_name=topic_name,
-				partition_index=0,
 				message_bytes=unexpected_message
 			)
 
@@ -193,7 +201,6 @@ class KafkaManagerTest(unittest.TestCase):
 				kafka_writer = kafka_manager.get_transactional_writer()
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
-					partition_index=0,
 					message_bytes=f"message #{index}".encode()
 				)
 				kafka_writer.end_write_transaction()
@@ -262,7 +269,10 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_manager = KafkaManager(
 			kafka_wrapper=kafka_wrapper,
 			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
 		)
 
 		topic_name = str(uuid.uuid4())
@@ -270,9 +280,7 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"topic_name: {topic_name}")
 
 		kafka_manager.add_topic(
-			topic_name=topic_name,
-			partition_total=1,
-			replication_factor=1
+			topic_name=topic_name
 		).get_result()
 
 		group_name = str(uuid.uuid4())
@@ -290,7 +298,6 @@ class KafkaManagerTest(unittest.TestCase):
 
 			write_message_async_handle = kafka_writer.write_message(
 				topic_name=topic_name,
-				partition_index=0,
 				message_bytes=unexpected_message
 			)
 
@@ -324,7 +331,6 @@ class KafkaManagerTest(unittest.TestCase):
 				kafka_writer = kafka_manager.get_async_writer()
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
-					partition_index=0,
 					message_bytes=f"message #{index}".encode()
 				)
 				expected_written_message_async_handles.append(write_message_async_handle)
