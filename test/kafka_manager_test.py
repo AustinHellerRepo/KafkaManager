@@ -213,12 +213,10 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_messages.append(expected_written_message)
 				expected_messages_semaphore.release()
 
-		read_message = None
 		read_messages = []  # type: List[bytes]
 		read_messages_semaphore = Semaphore()
 
 		def read_thread_method():
-			nonlocal read_message
 			nonlocal read_messages
 			nonlocal read_messages_semaphore
 
@@ -342,12 +340,10 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_messages.append(expected_written_message)
 				expected_messages_semaphore.release()
 
-		read_message = None
 		read_messages = []  # type: List[bytes]
 		read_messages_semaphore = Semaphore()
 
 		def read_thread_method():
-			nonlocal read_message
 			nonlocal read_messages
 			nonlocal read_messages_semaphore
 
@@ -388,3 +384,83 @@ class KafkaManagerTest(unittest.TestCase):
 			self.assertIn(expected_message, read_messages)
 		for read_message in read_messages:
 			self.assertIn(read_message, expected_messages)
+
+	def test_async_handle_wait(self):
+
+		kafka_wrapper = KafkaWrapper(
+			host_url="0.0.0.0",
+			host_port=9092
+		)
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=kafka_wrapper,
+			read_polling_seconds=1.0,
+			cluster_propagation_seconds=30,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
+		)
+
+		topic_name = str(uuid.uuid4())
+
+		add_topic_async_handle = kafka_manager.add_topic(
+			topic_name=topic_name
+		)
+
+		added_topic_name = add_topic_async_handle.get_result()
+
+		self.assertEqual(topic_name, added_topic_name)
+
+		topics = kafka_manager.get_topics()
+
+		self.assertEqual((topic_name,), topics)
+
+		print(f"test_async_handle_wait: {datetime.utcnow()}")
+		start_time = datetime.utcnow()
+		remove_topic_async_handle = kafka_manager.remove_topic(
+			topic_name=topic_name
+		)
+		end_time = datetime.utcnow()
+		print(f"test_async_handle_wait: remove_topic took {(end_time - start_time).total_seconds()} seconds")
+
+		print(f"test_async_handle_wait: {datetime.utcnow()}")
+		start_time = datetime.utcnow()
+		is_successful = remove_topic_async_handle.try_wait(
+			timeout_seconds=0.01
+		)
+		end_time = datetime.utcnow()
+		print(f"test_async_handle_wait: wait took {(end_time - start_time).total_seconds()} seconds and is_successful: {is_successful}")
+
+		self.assertFalse(is_successful)
+
+		print(f"test_async_handle_wait: {datetime.utcnow()}")
+		start_time = datetime.utcnow()
+		is_successful = remove_topic_async_handle.try_wait(
+			timeout_seconds=1
+		)
+		end_time = datetime.utcnow()
+		actual_wait_seconds_total = (end_time - start_time).total_seconds()
+		print(f"test_async_handle_wait: wait took {(end_time - start_time).total_seconds()} seconds and is_successful: {is_successful}")
+
+		self.assertTrue(is_successful)
+
+		print(f"test_async_handle_wait: {datetime.utcnow()}")
+		start_time = datetime.utcnow()
+		is_successful = remove_topic_async_handle.try_wait(
+			timeout_seconds=0.01
+		)
+		end_time = datetime.utcnow()
+		shorter_wait_seconds_total = (end_time - start_time).total_seconds()
+		print(f"test_async_handle_wait: wait took {(end_time - start_time).total_seconds()} seconds and is_successful: {is_successful}")
+
+		self.assertTrue(is_successful)
+		self.assertLess(shorter_wait_seconds_total, actual_wait_seconds_total)
+
+		print(f"test_async_handle_wait: {datetime.utcnow()}")
+		removed_topic_name = remove_topic_async_handle.get_result()
+
+		self.assertEqual(topic_name, removed_topic_name)
+
+		topics = kafka_manager.get_topics()
+
+		self.assertEqual((), topics)

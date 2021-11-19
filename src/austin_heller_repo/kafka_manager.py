@@ -3,11 +3,12 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
-from austin_heller_repo.threading import Semaphore
+from austin_heller_repo.threading import Semaphore, TimeoutThread
 import uuid
 import random
 import time
 import itertools
+from datetime import datetime
 
 
 class AddTopicException(Exception):
@@ -123,9 +124,47 @@ class AsyncHandle():
 
 		self.__get_result_method = get_result_method
 
+		self.__is_storing = None
+		self.__result = None
+		self.__wait_for_result_semaphore = Semaphore()
+
+	def __store_result(self):
+
+		self.__wait_for_result_semaphore.acquire()
+		self.__is_storing = True
+		self.__result = self.__get_result_method()
+		self.__is_storing = False
+		self.__wait_for_result_semaphore.release()
+
+	def __wait_for_result(self):
+
+		self.__wait_for_result_semaphore.acquire()
+		self.__wait_for_result_semaphore.release()
+
+	def try_wait(self, *, timeout_seconds: float) -> bool:
+
+		if self.__is_storing is None:
+			timeout_thread = TimeoutThread(self.__store_result, timeout_seconds)
+			timeout_thread.start()
+			is_successful = timeout_thread.try_wait()
+		elif self.__is_storing:
+			timeout_thread = TimeoutThread(self.__wait_for_result, timeout_seconds)
+			timeout_thread.start()
+			is_successful = timeout_thread.try_wait()
+		else:
+			is_successful = True
+
+		return is_successful
+
 	def get_result(self) -> object:
 
-		return self.__get_result_method()
+		if self.__is_storing is None:
+			self.__store_result()
+		elif self.__is_storing:
+			self.__wait_for_result_semaphore.acquire()
+			self.__wait_for_result_semaphore.release()
+
+		return self.__result
 
 
 class KafkaAsyncWriter():
@@ -409,7 +448,7 @@ class KafkaManager():
 
 			admin_client = self.__kafka_wrapper.get_admin_client()
 
-			future_per_topic = admin_client.delete_topics([topic_name], operation_timeout=self.__remove_topic_cluster_propagation_blocking_timeout_seconds)  # type: Dict[NewTopic, Future]
+			future_per_topic = admin_client.delete_topics([topic_name])  # type: Dict[NewTopic, Future]
 
 			removed_topic = None  # type: NewTopic
 
@@ -426,6 +465,19 @@ class KafkaManager():
 					future.result()
 
 					removed_topic = topic
+
+					verification_delay_seconds = 0.01
+					maximum_verification_iterations_total = int(self.__cluster_propagation_seconds / verification_delay_seconds)
+					is_verified = False
+					for verification_index in range(maximum_verification_iterations_total):
+						all_topics = self.get_topics()
+						if removed_topic in all_topics:
+							time.sleep(verification_delay_seconds)
+						else:
+							is_verified = True
+							break
+					if not is_verified:
+						raise RemoveTopicException(f"Failed to verify topic no longer exists after {self.__cluster_propagation_seconds} seconds.")
 
 				return removed_topic
 
