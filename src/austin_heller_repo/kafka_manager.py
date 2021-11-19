@@ -3,7 +3,7 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
-from austin_heller_repo.threading import Semaphore, TimeoutThread
+from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle
 import uuid
 import random
 import time
@@ -118,55 +118,6 @@ class KafkaWrapper():
 		return consumer
 
 
-class AsyncHandle():
-
-	def __init__(self, *, get_result_method: Callable[[], object]):
-
-		self.__get_result_method = get_result_method
-
-		self.__is_storing = None
-		self.__result = None
-		self.__wait_for_result_semaphore = Semaphore()
-
-	def __store_result(self):
-
-		self.__wait_for_result_semaphore.acquire()
-		self.__is_storing = True
-		self.__result = self.__get_result_method()
-		self.__is_storing = False
-		self.__wait_for_result_semaphore.release()
-
-	def __wait_for_result(self):
-
-		self.__wait_for_result_semaphore.acquire()
-		self.__wait_for_result_semaphore.release()
-
-	def try_wait(self, *, timeout_seconds: float) -> bool:
-
-		if self.__is_storing is None:
-			timeout_thread = TimeoutThread(self.__store_result, timeout_seconds)
-			timeout_thread.start()
-			is_successful = timeout_thread.try_wait()
-		elif self.__is_storing:
-			timeout_thread = TimeoutThread(self.__wait_for_result, timeout_seconds)
-			timeout_thread.start()
-			is_successful = timeout_thread.try_wait()
-		else:
-			is_successful = True
-
-		return is_successful
-
-	def get_result(self) -> object:
-
-		if self.__is_storing is None:
-			self.__store_result()
-		elif self.__is_storing:
-			self.__wait_for_result_semaphore.acquire()
-			self.__wait_for_result_semaphore.release()
-
-		return self.__result
-
-
 class KafkaAsyncWriter():
 
 	def __init__(self, *, kafka_manager: KafkaManager, producer: Producer):
@@ -184,15 +135,32 @@ class KafkaAsyncWriter():
 		callback_semaphore = Semaphore()
 		callback_semaphore.acquire()
 
-		def get_result_method() -> bytes:
+		def get_result_method(is_cancelled: BooleanReference) -> bytes:
 			nonlocal callback_error
 			nonlocal callback_message
 			nonlocal callback_semaphore
 
 			self.__producer.flush()
 
-			callback_semaphore.acquire()
-			callback_semaphore.release()
+			# poll is_cancelled while the semaphore waits
+
+			is_waiting = True
+
+			def wait_thread_method():
+				nonlocal is_waiting
+				nonlocal callback_semaphore
+
+				callback_semaphore.acquire()
+				is_waiting = False
+				callback_semaphore.release()
+
+			wait_thread = start_thread(wait_thread_method)
+
+			while is_waiting:
+				if not is_cancelled.get():
+					time.sleep(0.01)
+
+			# finished waiting at this point
 
 			if callback_error is not None:
 				raise WriteMessageException(callback_error)
@@ -260,18 +228,21 @@ class KafkaReader():
 
 	def read_message(self) -> AsyncHandle:
 
-		def get_result_method():
+		def get_result_method(is_cancelled: BooleanReference):
 
 			message = None  # type: Message
 
-			while message is None:
+			while message is None and not is_cancelled.get():
 				message = self.__consumer.poll(self.__read_polling_seconds)
 				if message is not None:
 					message_error = message.error()
 					if message_error is not None:
 						raise ReadMessageException(message_error)
 
-			return message.value()
+			if message is not None:
+				return message.value()
+			else:
+				return None
 
 		async_handle = AsyncHandle(
 			get_result_method=get_result_method
@@ -382,11 +353,11 @@ class KafkaBroker():
 # TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
 class KafkaManager():
 
-	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, cluster_propagation_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
 
 		self.__kafka_wrapper = kafka_wrapper
 		self.__read_polling_seconds = read_polling_seconds
-		self.__cluster_propagation_seconds = cluster_propagation_seconds
+		self.__is_cancelled_polling_seconds = is_cancelled_polling_seconds
 		self.__new_topic_partitions_total = new_topic_partitions_total
 		self.__new_topic_replication_factor = new_topic_replication_factor
 		self.__remove_topic_cluster_propagation_blocking_timeout_seconds = remove_topic_cluster_propagation_blocking_timeout_seconds
@@ -405,7 +376,7 @@ class KafkaManager():
 
 			added_topic = None  # type: NewTopic
 
-			def get_result_method() -> str:
+			def get_result_method(is_cancelled: BooleanReference) -> str:
 				nonlocal future_per_topic
 				nonlocal added_topic
 				nonlocal admin_client
@@ -419,18 +390,12 @@ class KafkaManager():
 
 					added_topic = topic
 
-					verification_delay_seconds = 0.01
-					maximum_verification_iterations_total = int(self.__cluster_propagation_seconds / verification_delay_seconds)
-					is_verified = False
-					for verification_index in range(maximum_verification_iterations_total):
+					while not is_cancelled.get():
 						all_topics = self.get_topics()
 						if added_topic not in all_topics:
-							time.sleep(verification_delay_seconds)
+							time.sleep(self.__is_cancelled_polling_seconds)
 						else:
-							is_verified = True
 							break
-					if not is_verified:
-						raise AddTopicException(f"Failed to verify topic exists after {self.__cluster_propagation_seconds} seconds.")
 
 				return added_topic
 
@@ -452,7 +417,7 @@ class KafkaManager():
 
 			removed_topic = None  # type: NewTopic
 
-			def get_result_method() -> str:
+			def get_result_method(is_cancelled: BooleanReference) -> str:
 				nonlocal future_per_topic
 				nonlocal removed_topic
 				nonlocal admin_client
@@ -466,18 +431,12 @@ class KafkaManager():
 
 					removed_topic = topic
 
-					verification_delay_seconds = 0.01
-					maximum_verification_iterations_total = int(self.__cluster_propagation_seconds / verification_delay_seconds)
-					is_verified = False
-					for verification_index in range(maximum_verification_iterations_total):
+					while not is_cancelled.get():
 						all_topics = self.get_topics()
 						if removed_topic in all_topics:
-							time.sleep(verification_delay_seconds)
+							time.sleep(self.__is_cancelled_polling_seconds)
 						else:
-							is_verified = True
 							break
-					if not is_verified:
-						raise RemoveTopicException(f"Failed to verify topic no longer exists after {self.__cluster_propagation_seconds} seconds.")
 
 				return removed_topic
 

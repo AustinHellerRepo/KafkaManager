@@ -1,10 +1,29 @@
 import unittest
-from src.austin_heller_repo.kafka_manager import KafkaManager, AsyncHandle, KafkaReader, KafkaWrapper
-from austin_heller_repo.threading import start_thread, Semaphore
+from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper
+from austin_heller_repo.threading import start_thread, Semaphore, BooleanReference, AsyncHandle
 import uuid
 import time
 from datetime import datetime
 from typing import List, Tuple, Dict
+
+
+def get_default_kafka_manager() -> KafkaManager:
+
+	kafka_wrapper = KafkaWrapper(
+		host_url="0.0.0.0",
+		host_port=9092
+	)
+
+	kafka_manager = KafkaManager(
+		kafka_wrapper=kafka_wrapper,
+		read_polling_seconds=1.0,
+		is_cancelled_polling_seconds=0.01,
+		new_topic_partitions_total=1,
+		new_topic_replication_factor=1,
+		remove_topic_cluster_propagation_blocking_timeout_seconds=30
+	)
+
+	return kafka_manager
 
 
 class KafkaManagerTest(unittest.TestCase):
@@ -13,19 +32,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		print(f"setUp: started: {datetime.utcnow()}")
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		print(f"setUp: initialized: {datetime.utcnow()}")
 
@@ -49,37 +56,13 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_initialize(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		self.assertIsNotNone(kafka_manager)
 
 	def test_list_all_topics(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		topics = kafka_manager.get_topics()
 
@@ -89,19 +72,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_add_and_remove_topic(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		topic_name = str(uuid.uuid4())
 
@@ -129,19 +100,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_write_and_read_from_topic_transactional(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		topic_name = str(uuid.uuid4())
 
@@ -259,19 +218,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_write_and_read_from_topic_async(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		topic_name = str(uuid.uuid4())
 
@@ -387,19 +334,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 	def test_async_handle_wait(self):
 
-		kafka_wrapper = KafkaWrapper(
-			host_url="0.0.0.0",
-			host_port=9092
-		)
-
-		kafka_manager = KafkaManager(
-			kafka_wrapper=kafka_wrapper,
-			read_polling_seconds=1.0,
-			cluster_propagation_seconds=30,
-			new_topic_partitions_total=1,
-			new_topic_replication_factor=1,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=30
-		)
+		kafka_manager = get_default_kafka_manager()
 
 		topic_name = str(uuid.uuid4())
 
