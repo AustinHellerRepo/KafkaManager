@@ -3,7 +3,7 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
-from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle
+from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle
 import uuid
 import random
 import time
@@ -135,7 +135,7 @@ class KafkaAsyncWriter():
 		callback_semaphore = Semaphore()
 		callback_semaphore.acquire()
 
-		def get_result_method(is_cancelled: BooleanReference) -> bytes:
+		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> bytes:
 			nonlocal callback_error
 			nonlocal callback_message
 			nonlocal callback_semaphore
@@ -157,7 +157,7 @@ class KafkaAsyncWriter():
 			wait_thread = start_thread(wait_thread_method)
 
 			while is_waiting:
-				if not is_cancelled.get():
+				if not read_only_async_handle.is_cancelled():
 					time.sleep(0.01)
 
 			# finished waiting at this point
@@ -228,11 +228,11 @@ class KafkaReader():
 
 	def read_message(self) -> AsyncHandle:
 
-		def get_result_method(is_cancelled: BooleanReference):
+		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle):
 
 			message = None  # type: Message
 
-			while message is None and not is_cancelled.get():
+			while message is None and not read_only_async_handle.is_cancelled():
 				message = self.__consumer.poll(self.__read_polling_seconds)
 				if message is not None:
 					message_error = message.error()
@@ -376,7 +376,7 @@ class KafkaManager():
 
 			added_topic = None  # type: NewTopic
 
-			def get_result_method(is_cancelled: BooleanReference) -> str:
+			def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
 				nonlocal future_per_topic
 				nonlocal added_topic
 				nonlocal admin_client
@@ -390,7 +390,7 @@ class KafkaManager():
 
 					added_topic = topic
 
-					while not is_cancelled.get():
+					while not read_only_async_handle.is_cancelled():
 						all_topics = self.get_topics()
 						if added_topic not in all_topics:
 							time.sleep(self.__is_cancelled_polling_seconds)
@@ -417,7 +417,7 @@ class KafkaManager():
 
 			removed_topic = None  # type: NewTopic
 
-			def get_result_method(is_cancelled: BooleanReference) -> str:
+			def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
 				nonlocal future_per_topic
 				nonlocal removed_topic
 				nonlocal admin_client
@@ -431,7 +431,7 @@ class KafkaManager():
 
 					removed_topic = topic
 
-					while not is_cancelled.get():
+					while not read_only_async_handle.is_cancelled():
 						all_topics = self.get_topics()
 						if removed_topic in all_topics:
 							time.sleep(self.__is_cancelled_polling_seconds)
