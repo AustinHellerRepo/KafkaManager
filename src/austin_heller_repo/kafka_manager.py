@@ -226,6 +226,31 @@ class KafkaReader():
 		self.__consumer = consumer
 		self.__read_polling_seconds = read_polling_seconds
 
+	def try_read_message(self, *, timeout_seconds: float) -> AsyncHandle:
+
+		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle):
+			nonlocal timeout_seconds
+
+			read_async_handle = self.read_message()
+
+			read_async_handle.add_parent(
+				async_handle=read_only_async_handle
+			)
+
+			if read_async_handle.try_wait(
+				timeout_seconds=timeout_seconds
+			):
+				return read_async_handle.get_result()
+			else:
+				read_async_handle.cancel()
+				return None
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result_method
+		)
+
+		return async_handle
+
 	def read_message(self) -> AsyncHandle:
 
 		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle):
@@ -234,10 +259,13 @@ class KafkaReader():
 
 			while message is None and not read_only_async_handle.is_cancelled():
 				message = self.__consumer.poll(self.__read_polling_seconds)
-				if message is not None:
-					message_error = message.error()
-					if message_error is not None:
-						raise ReadMessageException(message_error)
+				if not read_only_async_handle.is_cancelled():
+					if message is not None:
+						message_error = message.error()
+						if message_error is not None:
+							raise ReadMessageException(message_error)
+				else:
+					message = None
 
 			if message is not None:
 				return message.value()
@@ -402,6 +430,7 @@ class KafkaManager():
 			async_handle = AsyncHandle(
 				get_result_method=get_result_method
 			)
+			# TODO consider initiating with async_handle.try_wait 0
 
 			return async_handle
 

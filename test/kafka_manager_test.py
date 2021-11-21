@@ -399,3 +399,49 @@ class KafkaManagerTest(unittest.TestCase):
 		topics = kafka_manager.get_topics()
 
 		self.assertEqual((), topics)
+
+	def test_write_one_message_read_until_end(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_writer = kafka_manager.get_async_writer()
+
+		kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=b"test"
+		).get_result()
+
+		time.sleep(10)
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			group_name=str(uuid.uuid4()),
+			is_from_beginning=True
+		)
+
+		first_message = kafka_reader.try_read_message(timeout_seconds=4).get_result()
+
+		self.assertIsNotNone(first_message)
+		self.assertEqual(b"test", first_message)
+
+		start_time = datetime.utcnow()
+		second_message_quickly_discovered_empty_topic = kafka_reader.try_read_message(timeout_seconds=4).try_wait(
+			timeout_seconds=6
+		)
+		end_time = datetime.utcnow()
+		self.assertLess((end_time - start_time).total_seconds(), 5)
+
+		self.assertTrue(second_message_quickly_discovered_empty_topic)
+
+		second_message_async_handle = kafka_reader.try_read_message(timeout_seconds=4)
+
+		second_message = second_message_async_handle.get_result()
+
+		self.assertIsNone(second_message)
+		self.assertFalse(second_message_async_handle.is_cancelled())
