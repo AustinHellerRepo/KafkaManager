@@ -1,5 +1,5 @@
 import unittest
-from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper
+from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaReaderSeekIndex
 from austin_heller_repo.threading import start_thread, Semaphore, BooleanReference, AsyncHandle
 import uuid
 import time
@@ -110,10 +110,6 @@ class KafkaManagerTest(unittest.TestCase):
 			topic_name=topic_name
 		).get_result()
 
-		group_name = str(uuid.uuid4())
-
-		print(f"group name: {group_name}")
-
 		unexpected_message = b"unexpected"
 		unexpected_written_message = None
 
@@ -141,10 +137,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
-				group_name=group_name,
-				is_from_beginning=False,
-				partition_index=0
-			)
+				is_from_beginning=False
+			).get_result()
 
 		expected_written_message = None
 		expected_written_message_async_handles = []  # type: List[AsyncHandle]
@@ -229,10 +223,6 @@ class KafkaManagerTest(unittest.TestCase):
 			topic_name=topic_name
 		).get_result()
 
-		group_name = str(uuid.uuid4())
-
-		print(f"{datetime.utcnow()}: group name: {group_name}")
-
 		unexpected_message = b"unexpected"
 		unexpected_written_message = None
 
@@ -258,10 +248,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
-				group_name=group_name,
-				is_from_beginning=False,
-				partition_index=0
-			)
+				is_from_beginning=False
+			).get_result()
 
 			print(f"{datetime.utcnow()}: created reader")
 
@@ -425,10 +413,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		kafka_reader = kafka_manager.get_reader(
 			topic_name=topic_name,
-			group_name=str(uuid.uuid4()),
-			is_from_beginning=True,
-			partition_index=0
-		)
+			is_from_beginning=True
+		).get_result()
 
 		first_message = kafka_reader.try_read_message(timeout_seconds=4).get_result()
 
@@ -463,10 +449,6 @@ class KafkaManagerTest(unittest.TestCase):
 			topic_name=topic_name
 		).get_result()
 
-		group_name = str(uuid.uuid4())
-
-		print(f"{datetime.utcnow()}: group name: {group_name}")
-
 		unexpected_message = b"unexpected"
 		unexpected_written_message = None
 
@@ -492,10 +474,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
-				group_name=group_name,
-				is_from_beginning=True,
-				partition_index=0
-			)
+				is_from_beginning=True
+			).get_result()
 
 			print(f"{datetime.utcnow()}: created reader")
 
@@ -585,10 +565,6 @@ class KafkaManagerTest(unittest.TestCase):
 			topic_name=topic_name
 		).get_result()
 
-		group_name = str(uuid.uuid4())
-
-		print(f"{datetime.utcnow()}: group name: {group_name}")
-
 		kafka_reader = None  # type: KafkaReader
 
 		def create_read_message_async_handle_thread_method():
@@ -596,10 +572,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
-				group_name=group_name,
-				is_from_beginning=True,
-				partition_index=0
-			)
+				is_from_beginning=True
+			).get_result()
 
 			print(f"{datetime.utcnow()}: created reader")
 
@@ -705,20 +679,18 @@ class KafkaManagerTest(unittest.TestCase):
 
 		kafka_reader = kafka_manager.get_reader(
 			topic_name=topic_name,
-			group_name=str(uuid.uuid4()),
-			is_from_beginning=True,
-			partition_index=0
-		)
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
 
 		first_message = kafka_reader.read_message().get_result()  # type: bytes
 
 		print(f"first_message: {first_message}")
 		self.assertEqual(b"first", first_message)
 
-		seek_index = kafka_reader.get_seek_index().get_result()
+		seek_index = kafka_reader.get_seek_index().get_result()  # type: KafkaReaderSeekIndex
 
-		print(f"seek_index: {seek_index}")
-		self.assertEqual(1, seek_index)
+		print(f"seek_index.get_partition_indexes(): {seek_index.get_partition_indexes()}")
+		self.assertEqual((1,), seek_index.get_partition_indexes())
 
 		kafka_reader.set_seek_index_to_end().get_result()
 
