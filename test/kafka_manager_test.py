@@ -142,7 +142,8 @@ class KafkaManagerTest(unittest.TestCase):
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
 				group_name=group_name,
-				is_from_beginning=False
+				is_from_beginning=False,
+				partition_index=0
 			)
 
 		expected_written_message = None
@@ -222,7 +223,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		topic_name = str(uuid.uuid4())
 
-		print(f"topic_name: {topic_name}")
+		print(f"{datetime.utcnow()}: topic_name: {topic_name}")
 
 		kafka_manager.add_topic(
 			topic_name=topic_name
@@ -230,7 +231,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		group_name = str(uuid.uuid4())
 
-		print(f"group name: {group_name}")
+		print(f"{datetime.utcnow()}: group name: {group_name}")
 
 		unexpected_message = b"unexpected"
 		unexpected_written_message = None
@@ -248,7 +249,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 			unexpected_written_message = write_message_async_handle.get_result()
 
-			print(f"unexpected_written_message: {unexpected_written_message}")
+			print(f"{datetime.utcnow()}: unexpected_written_message: {unexpected_written_message}")
 
 		kafka_reader = None  # type: KafkaReader
 
@@ -258,8 +259,11 @@ class KafkaManagerTest(unittest.TestCase):
 			kafka_reader = kafka_manager.get_reader(
 				topic_name=topic_name,
 				group_name=group_name,
-				is_from_beginning=False
+				is_from_beginning=False,
+				partition_index=0
 			)
+
+			print(f"{datetime.utcnow()}: created reader")
 
 		expected_written_message = None
 		expected_written_message_async_handles = []  # type: List[AsyncHandle]
@@ -282,7 +286,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
 				expected_written_message = expected_written_message_async_handle.get_result()
-				print(f"written_message: {expected_written_message}")
+				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
 				expected_messages_semaphore.acquire()
 				expected_messages.append(expected_written_message)
 				expected_messages_semaphore.release()
@@ -294,11 +298,11 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal read_messages
 			nonlocal read_messages_semaphore
 
-			print("reading")
+			print(f"{datetime.utcnow()}: reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
-			print(f"getting result")
+			print(f"{datetime.utcnow()}: getting result")
 			read_message = kafka_reader_async_handle.get_result()
-			print(f"read message: {read_message}")
+			print(f"{datetime.utcnow()}: read message: {read_message}")
 			read_messages_semaphore.acquire()
 			read_messages.append(read_message)
 			read_messages_semaphore.release()
@@ -422,7 +426,8 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_reader = kafka_manager.get_reader(
 			topic_name=topic_name,
 			group_name=str(uuid.uuid4()),
-			is_from_beginning=True
+			is_from_beginning=True,
+			partition_index=0
 		)
 
 		first_message = kafka_reader.try_read_message(timeout_seconds=4).get_result()
@@ -445,3 +450,284 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertIsNone(second_message)
 		self.assertFalse(second_message_async_handle.is_cancelled())
+
+	def test_write_and_read_from_topic_async_everything_async(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		print(f"{datetime.utcnow()}: topic_name: {topic_name}")
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		group_name = str(uuid.uuid4())
+
+		print(f"{datetime.utcnow()}: group name: {group_name}")
+
+		unexpected_message = b"unexpected"
+		unexpected_written_message = None
+
+		def write_unexpected_thread_method():
+			nonlocal unexpected_message
+			nonlocal unexpected_written_message
+
+			kafka_writer = kafka_manager.get_async_writer()
+
+			write_message_async_handle = kafka_writer.write_message(
+				topic_name=topic_name,
+				message_bytes=unexpected_message
+			)
+
+			unexpected_written_message = write_message_async_handle.get_result()
+
+			print(f"{datetime.utcnow()}: unexpected_written_message: {unexpected_written_message}")
+
+		kafka_reader = None  # type: KafkaReader
+
+		def create_read_message_async_handle_thread_method():
+			nonlocal kafka_reader
+
+			kafka_reader = kafka_manager.get_reader(
+				topic_name=topic_name,
+				group_name=group_name,
+				is_from_beginning=True,
+				partition_index=0
+			)
+
+			print(f"{datetime.utcnow()}: created reader")
+
+		expected_written_message = None
+		expected_written_message_async_handles = []  # type: List[AsyncHandle]
+		expected_messages = []  # type: List[bytes]
+		expected_messages.append(unexpected_message)  # grab everything
+		expected_messages_semaphore = Semaphore()
+
+		def write_expected_thread_method():
+			nonlocal expected_written_message
+			nonlocal expected_written_message_async_handles
+			nonlocal expected_messages
+			nonlocal expected_messages_semaphore
+
+			for index in range(10):
+				kafka_writer = kafka_manager.get_async_writer()
+				write_message_async_handle = kafka_writer.write_message(
+					topic_name=topic_name,
+					message_bytes=f"message #{index}".encode()
+				)
+				expected_written_message_async_handles.append(write_message_async_handle)
+
+			for expected_written_message_async_handle in expected_written_message_async_handles:
+				expected_written_message = expected_written_message_async_handle.get_result()
+				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
+				expected_messages_semaphore.acquire()
+				expected_messages.append(expected_written_message)
+				expected_messages_semaphore.release()
+
+		read_messages = []  # type: List[bytes]
+		read_messages_semaphore = Semaphore()
+
+		def read_thread_method():
+			nonlocal read_messages
+			nonlocal read_messages_semaphore
+
+			print(f"{datetime.utcnow()}: reading")
+			kafka_reader_async_handle = kafka_reader.read_message()
+			print(f"{datetime.utcnow()}: getting result")
+			read_message = kafka_reader_async_handle.get_result()
+			print(f"{datetime.utcnow()}: read message: {read_message}")
+			read_messages_semaphore.acquire()
+			read_messages.append(read_message)
+			read_messages_semaphore.release()
+
+		write_unexpected_thread = start_thread(write_unexpected_thread_method)
+
+		write_unexpected_thread.join()
+
+		create_read_message_async_handle_thread = start_thread(create_read_message_async_handle_thread_method)
+
+		create_read_message_async_handle_thread.join()
+
+		read_threads = []
+		for index in range(11):
+			read_thread = start_thread(read_thread_method)
+			read_threads.append(read_thread)
+
+		# wait for the readers to have a change to poll, causing them to be assigned
+		#time.sleep(10)
+
+		write_expected_thread = start_thread(write_expected_thread_method)
+
+		write_expected_thread.join()
+
+		for read_thread in read_threads:
+			read_thread.join()
+
+		self.assertEqual(unexpected_message, unexpected_written_message)
+		for expected_message in expected_messages:
+			self.assertIn(expected_message, read_messages)
+		for read_message in read_messages:
+			self.assertIn(read_message, expected_messages)
+
+	def test_write_and_read_from_topic_async_everything_sync(self):
+
+		messages_total = 1000
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		print(f"{datetime.utcnow()}: topic_name: {topic_name}")
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		group_name = str(uuid.uuid4())
+
+		print(f"{datetime.utcnow()}: group name: {group_name}")
+
+		kafka_reader = None  # type: KafkaReader
+
+		def create_read_message_async_handle_thread_method():
+			nonlocal kafka_reader
+
+			kafka_reader = kafka_manager.get_reader(
+				topic_name=topic_name,
+				group_name=group_name,
+				is_from_beginning=True,
+				partition_index=0
+			)
+
+			print(f"{datetime.utcnow()}: created reader")
+
+		expected_written_message = None
+		expected_written_message_async_handles = []  # type: List[AsyncHandle]
+		expected_messages = []  # type: List[bytes]
+		expected_messages_semaphore = Semaphore()
+
+		def write_expected_thread_method():
+			nonlocal expected_written_message
+			nonlocal expected_written_message_async_handles
+			nonlocal expected_messages
+			nonlocal expected_messages_semaphore
+			nonlocal messages_total
+
+			for index in range(messages_total):
+				kafka_writer = kafka_manager.get_async_writer()
+				write_message_async_handle = kafka_writer.write_message(
+					topic_name=topic_name,
+					message_bytes=f"message #{index}".encode()
+				)
+				expected_written_message_async_handles.append(write_message_async_handle)
+
+			for expected_written_message_async_handle in expected_written_message_async_handles:
+				expected_written_message = expected_written_message_async_handle.get_result()
+				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
+				expected_messages_semaphore.acquire()
+				expected_messages.append(expected_written_message)
+				expected_messages_semaphore.release()
+
+		read_messages = []  # type: List[bytes]
+		read_messages_semaphore = Semaphore()
+		synchronized_read_semaphore = Semaphore()
+
+		def read_thread_method():
+			nonlocal read_messages
+			nonlocal read_messages_semaphore
+			nonlocal synchronized_read_semaphore
+
+			synchronized_read_semaphore.acquire()
+
+			print(f"{datetime.utcnow()}: reading")
+			kafka_reader_async_handle = kafka_reader.read_message()
+			print(f"{datetime.utcnow()}: getting result")
+			read_message = kafka_reader_async_handle.get_result()
+			print(f"{datetime.utcnow()}: read message: {read_message}")
+			read_messages_semaphore.acquire()
+			read_messages.append(read_message)
+			read_messages_semaphore.release()
+
+			synchronized_read_semaphore.release()
+
+		create_read_message_async_handle_thread = start_thread(create_read_message_async_handle_thread_method)
+
+		create_read_message_async_handle_thread.join()
+
+		read_threads = []
+		for index in range(messages_total):
+			read_thread = start_thread(read_thread_method)
+			read_threads.append(read_thread)
+
+		# wait for the readers to have a change to poll, causing them to be assigned
+		#time.sleep(10)
+
+		write_expected_thread = start_thread(write_expected_thread_method)
+
+		write_expected_thread.join()
+
+		for read_thread in read_threads:
+			read_thread.join()
+
+		for expected_message in expected_messages:
+			self.assertIn(expected_message, read_messages)
+		for read_message in read_messages:
+			self.assertIn(read_message, expected_messages)
+
+	def test_read_first_and_read_last(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		kafka_writer = kafka_manager.get_async_writer()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=b"first"
+		).get_result()
+
+		kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=b"second"
+		).get_result()
+
+		kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=b"third"
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			group_name=str(uuid.uuid4()),
+			is_from_beginning=True,
+			partition_index=0
+		)
+
+		first_message = kafka_reader.read_message().get_result()  # type: bytes
+
+		print(f"first_message: {first_message}")
+		self.assertEqual(b"first", first_message)
+
+		seek_index = kafka_reader.get_seek_index().get_result()
+
+		print(f"seek_index: {seek_index}")
+		self.assertEqual(1, seek_index)
+
+		kafka_reader.set_seek_index_to_end().get_result()
+
+		kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=b"fourth"
+		).get_result()
+
+		fourth_message = kafka_reader.read_message().get_result()  # type: bytes
+
+		print(f"fourth_message: {fourth_message}")
+		self.assertEqual(b"fourth", fourth_message)

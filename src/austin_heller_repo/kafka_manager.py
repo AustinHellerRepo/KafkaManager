@@ -1,6 +1,6 @@
 from __future__ import annotations
 from confluent_kafka.admin import AdminClient, NewTopic
-from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition
+from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition, OFFSET_BEGINNING, OFFSET_END
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
 from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle
@@ -100,7 +100,7 @@ class KafkaWrapper():
 			producer = self.__async_producer
 		return producer
 
-	def get_consumer(self, *, topic_name: str, group_name: str, is_from_beginning: bool):
+	def get_consumer(self, *, topic_name: str, group_name: str, is_from_beginning: bool, partition_index: int):
 
 		if topic_name.startswith("^"):
 			raise ReadMessageException(f"topic_name cannot start with \"^\" character.")
@@ -112,7 +112,13 @@ class KafkaWrapper():
 			"queued.min.messages": 1
 		})
 
-		consumer.subscribe([topic_name])
+		topic_partition = TopicPartition(
+			topic_name,
+			partition_index
+		)
+
+		consumer.assign([topic_partition])
+
 		self.__consumers.append(consumer)
 		self.__consumers_semaphore.release()
 		return consumer
@@ -225,6 +231,78 @@ class KafkaReader():
 
 		self.__consumer = consumer
 		self.__read_polling_seconds = read_polling_seconds
+
+		self.__topic_partition = self.__consumer.assignment()[0]  # type: TopicPartition
+
+	def set_seek_index_to_front(self) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			self.__consumer.seek(partition=TopicPartition(
+				self.__topic_partition.topic,
+				self.__topic_partition.partition,
+				OFFSET_BEGINNING
+			))
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
+
+	def set_seek_index_to_end(self):
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			self.__consumer.seek(partition=TopicPartition(
+				self.__topic_partition.topic,
+				self.__topic_partition.partition,
+				OFFSET_END
+			))
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
+
+	def set_seek_index(self, *, index: int):
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			nonlocal index
+
+			self.__consumer.seek(partition=TopicPartition(
+				self.__topic_partition.topic,
+				self.__topic_partition.partition,
+				index
+			))
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
+
+	def get_seek_index(self) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> int:
+			return self.__consumer.position([self.__topic_partition])[0].offset
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
 
 	def try_read_message(self, *, timeout_seconds: float) -> AsyncHandle:
 
@@ -545,12 +623,13 @@ class KafkaManager():
 			producer=producer
 		)
 
-	def get_reader(self, *, topic_name: str, group_name: str, is_from_beginning: bool) -> KafkaReader:
+	def get_reader(self, *, topic_name: str, group_name: str, is_from_beginning: bool, partition_index: int) -> KafkaReader:
 
 		consumer = self.__kafka_wrapper.get_consumer(
 			topic_name=topic_name,
 			group_name=group_name,
-			is_from_beginning=is_from_beginning
+			is_from_beginning=is_from_beginning,
+			partition_index=partition_index
 		)
 
 		return KafkaReader(
