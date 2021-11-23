@@ -703,7 +703,7 @@ class KafkaManager():
 		).get_result()  # type: KafkaReader
 
 		is_last_message_found = False
-		if not is_last_message_found:
+		while not is_last_message_found:
 			message = kafka_reader.try_read_message(
 				timeout_seconds=end_of_topic_read_timeout_seconds
 			).get_result()
