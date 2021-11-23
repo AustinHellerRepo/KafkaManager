@@ -692,3 +692,25 @@ class KafkaManager():
 		)
 
 		return async_handle
+
+	def get_messages(self, *, topic_name: str, end_of_topic_read_timeout_seconds: float) -> List[Message]:
+
+		messages = []  # type: List[Message]
+
+		kafka_reader = self.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		is_last_message_found = False
+		if not is_last_message_found:
+			message = kafka_reader.try_read_message(
+				timeout_seconds=end_of_topic_read_timeout_seconds
+			).get_result()
+
+			if message is None:
+				is_last_message_found = True
+			else:
+				messages.append(message)
+
+		return messages
