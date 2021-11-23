@@ -137,6 +137,42 @@ class KafkaWrapper():
 		return consumer
 
 
+class KafkaTopicSeekIndex():
+
+	def __init__(self, *, topic_name: str, partition_indexes: Tuple[int]):
+
+		self.__topic_name = topic_name
+		self.__partition_indexes = partition_indexes
+
+	def get_topic_name(self) -> str:
+		return self.__topic_name
+
+	def get_partition_indexes(self) -> Tuple[int]:
+		return self.__partition_indexes
+
+
+class KafkaMessage():
+
+	def __init__(self, *, message_bytes: bytes, partition_index: int, offset: int, topic_name: str):
+
+		self.__message_bytes = message_bytes
+		self.__partition_index = partition_index
+		self.__offset = offset
+		self.__topic_name = topic_name
+
+	def get_message_bytes(self) -> bytes:
+		return self.__message_bytes
+
+	def get_partition_index(self) -> int:
+		return self.__partition_index
+
+	def get_offset(self) -> int:
+		return self.__offset
+
+	def get_topic_name(self) -> str:
+		return self.__topic_name
+
+
 class KafkaAsyncWriter():
 
 	def __init__(self, *, kafka_manager: KafkaManager, producer: Producer):
@@ -158,6 +194,7 @@ class KafkaAsyncWriter():
 			nonlocal callback_error
 			nonlocal callback_message
 			nonlocal callback_semaphore
+			nonlocal topic_name
 
 			self.__producer.flush()
 
@@ -184,7 +221,13 @@ class KafkaAsyncWriter():
 			if callback_error is not None:
 				raise WriteMessageException(callback_error)
 			else:
-				return callback_message.value()
+				kafka_message = KafkaMessage(
+					message_bytes=callback_message.value(),
+					partition_index=callback_message.partition(),
+					offset=callback_message.offset(),
+					topic_name=topic_name
+				)
+				return kafka_message
 
 		def callback(error: KafkaError, message: Message):
 			nonlocal callback_error
@@ -239,22 +282,13 @@ class KafkaTransactionalWriter():
 		self.__producer.commit_transaction()
 
 
-class KafkaReaderSeekIndex():
-
-	def __init__(self, *, partition_indexes: Tuple[int]):
-
-		self.__partition_indexes = partition_indexes
-
-	def get_partition_indexes(self) -> Tuple[int]:
-		return self.__partition_indexes
-
-
 class KafkaReader():
 
-	def __init__(self, *, consumer: Consumer, read_polling_seconds: float):
+	def __init__(self, *, consumer: Consumer, read_polling_seconds: float, topic_name: str):
 
 		self.__consumer = consumer
 		self.__read_polling_seconds = read_polling_seconds
+		self.__topic_name = topic_name
 
 		self.__topic_partitions = self.__consumer.assignment()  # type: List[TopicPartition]
 		if len(self.__topic_partitions) == 0:
@@ -300,12 +334,12 @@ class KafkaReader():
 
 		return async_handle
 
-	def set_seek_index(self, *, kafka_reader_seek_index: KafkaReaderSeekIndex):
+	def set_seek_index(self, *, kafka_topic_seek_index: KafkaTopicSeekIndex):
 
 		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
-			nonlocal kafka_reader_seek_index
+			nonlocal kafka_topic_seek_index
 
-			for seek_index, topic_partition in zip(kafka_reader_seek_index.get_partition_indexes(), self.__topic_partitions):
+			for seek_index, topic_partition in zip(kafka_topic_seek_index.get_partition_indexes(), self.__topic_partitions):
 				if not read_only_async_handle.is_cancelled():
 					self.__consumer.seek(partition=TopicPartition(
 						topic_partition.topic,
@@ -324,13 +358,14 @@ class KafkaReader():
 
 	def get_seek_index(self) -> AsyncHandle:
 
-		def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaReaderSeekIndex:
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaTopicSeekIndex:
 			partition_indexes = []  # type: List[int]
 			current_topic_partitions = self.__consumer.position(self.__topic_partitions)
 			if not read_only_async_handle.is_cancelled():
 				for topic_partition in current_topic_partitions:
 					partition_indexes.append(topic_partition.offset)
-				return KafkaReaderSeekIndex(
+				return KafkaTopicSeekIndex(
+					topic_name=self.__topic_name,
 					partition_indexes=tuple(partition_indexes)
 				)
 			#return self.__consumer.position([self.__topic_partition])[0].offset
@@ -346,7 +381,7 @@ class KafkaReader():
 
 	def try_read_message(self, *, timeout_seconds: float) -> AsyncHandle:
 
-		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle):
+		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaMessage:
 			nonlocal timeout_seconds
 
 			read_async_handle = self.read_message()
@@ -371,7 +406,7 @@ class KafkaReader():
 
 	def read_message(self) -> AsyncHandle:
 
-		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle):
+		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaMessage:
 
 			message = None  # type: Message
 
@@ -386,7 +421,14 @@ class KafkaReader():
 					message = None
 
 			if message is not None:
-				return message.value()
+				message_bytes = message.value()
+
+				return KafkaMessage(
+					message_bytes=message_bytes,
+					partition_index=message.partition(),
+					offset=message.offset(),
+					topic_name=self.__topic_name
+				)
 			else:
 				return None
 
@@ -679,7 +721,8 @@ class KafkaManager():
 			else:
 				kafka_reader = KafkaReader(
 					consumer=consumer,
-					read_polling_seconds=self.__read_polling_seconds
+					read_polling_seconds=self.__read_polling_seconds,
+					topic_name=topic_name
 				)
 
 			return kafka_reader
@@ -714,3 +757,18 @@ class KafkaManager():
 				messages.append(message)
 
 		return messages
+
+	def get_kafka_topic_seek_index_from_kafka_message(self, kafka_message: KafkaMessage) -> KafkaTopicSeekIndex:
+		partition_indexes = []  # type: List[int]
+		for topic_partition_index, topic_partition in enumerate(self.get_partitions(
+			topic_name=kafka_message.get_topic_name()
+		)):
+			if topic_partition_index == kafka_message.get_partition_index():
+				seek_index = kafka_message.get_offset()
+			else:
+				seek_index = OFFSET_END
+			partition_indexes.append(seek_index)
+		return KafkaTopicSeekIndex(
+			topic_name=kafka_message.get_topic_name(),
+			partition_indexes=tuple(partition_indexes)
+		)

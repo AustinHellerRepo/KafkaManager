@@ -1,5 +1,5 @@
 import unittest
-from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaReaderSeekIndex
+from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaTopicSeekIndex, KafkaMessage
 from austin_heller_repo.threading import start_thread, Semaphore, BooleanReference, AsyncHandle
 import uuid
 import time
@@ -126,7 +126,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 			kafka_writer.end_write_transaction()
 
-			unexpected_written_message = write_message_async_handle.get_result()
+			unexpected_written_message = write_message_async_handle.get_result().get_message_bytes()
 
 			print(f"unexpected_written_message: {unexpected_written_message}")
 
@@ -161,7 +161,7 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_written_message_async_handles.append(write_message_async_handle)
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
-				expected_written_message = expected_written_message_async_handle.get_result()
+				expected_written_message = expected_written_message_async_handle.get_result().get_message_bytes()
 				print(f"written_message: {expected_written_message}")
 				expected_messages_semaphore.acquire()
 				expected_messages.append(expected_written_message)
@@ -177,7 +177,7 @@ class KafkaManagerTest(unittest.TestCase):
 			print("reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"getting result")
-			read_message = kafka_reader_async_handle.get_result()
+			read_message = kafka_reader_async_handle.get_result().get_message_bytes()
 			print(f"read message: {read_message}")
 			read_messages_semaphore.acquire()
 			read_messages.append(read_message)
@@ -224,7 +224,7 @@ class KafkaManagerTest(unittest.TestCase):
 		).get_result()
 
 		unexpected_message = b"unexpected"
-		unexpected_written_message = None
+		unexpected_written_message = None  # type: bytes
 
 		def write_unexpected_thread_method():
 			nonlocal unexpected_message
@@ -237,7 +237,7 @@ class KafkaManagerTest(unittest.TestCase):
 				message_bytes=unexpected_message
 			)
 
-			unexpected_written_message = write_message_async_handle.get_result()
+			unexpected_written_message = write_message_async_handle.get_result().get_message_bytes()
 
 			print(f"{datetime.utcnow()}: unexpected_written_message: {unexpected_written_message}")
 
@@ -273,7 +273,7 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_written_message_async_handles.append(write_message_async_handle)
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
-				expected_written_message = expected_written_message_async_handle.get_result()
+				expected_written_message = expected_written_message_async_handle.get_result().get_message_bytes()
 				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
 				expected_messages_semaphore.acquire()
 				expected_messages.append(expected_written_message)
@@ -289,7 +289,7 @@ class KafkaManagerTest(unittest.TestCase):
 			print(f"{datetime.utcnow()}: reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"{datetime.utcnow()}: getting result")
-			read_message = kafka_reader_async_handle.get_result()
+			read_message = kafka_reader_async_handle.get_result().get_message_bytes()
 			print(f"{datetime.utcnow()}: read message: {read_message}")
 			read_messages_semaphore.acquire()
 			read_messages.append(read_message)
@@ -416,7 +416,7 @@ class KafkaManagerTest(unittest.TestCase):
 			is_from_beginning=True
 		).get_result()
 
-		first_message = kafka_reader.try_read_message(timeout_seconds=4).get_result()
+		first_message = kafka_reader.try_read_message(timeout_seconds=4).get_result().get_message_bytes()
 
 		self.assertIsNotNone(first_message)
 		self.assertEqual(b"test", first_message)
@@ -463,7 +463,7 @@ class KafkaManagerTest(unittest.TestCase):
 				message_bytes=unexpected_message
 			)
 
-			unexpected_written_message = write_message_async_handle.get_result()
+			unexpected_written_message = write_message_async_handle.get_result().get_message_bytes()
 
 			print(f"{datetime.utcnow()}: unexpected_written_message: {unexpected_written_message}")
 
@@ -500,7 +500,7 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_written_message_async_handles.append(write_message_async_handle)
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
-				expected_written_message = expected_written_message_async_handle.get_result()
+				expected_written_message = expected_written_message_async_handle.get_result().get_message_bytes()
 				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
 				expected_messages_semaphore.acquire()
 				expected_messages.append(expected_written_message)
@@ -516,7 +516,7 @@ class KafkaManagerTest(unittest.TestCase):
 			print(f"{datetime.utcnow()}: reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"{datetime.utcnow()}: getting result")
-			read_message = kafka_reader_async_handle.get_result()
+			read_message = kafka_reader_async_handle.get_result().get_message_bytes()
 			print(f"{datetime.utcnow()}: read message: {read_message}")
 			read_messages_semaphore.acquire()
 			read_messages.append(read_message)
@@ -598,7 +598,7 @@ class KafkaManagerTest(unittest.TestCase):
 				expected_written_message_async_handles.append(write_message_async_handle)
 
 			for expected_written_message_async_handle in expected_written_message_async_handles:
-				expected_written_message = expected_written_message_async_handle.get_result()
+				expected_written_message = expected_written_message_async_handle.get_result().get_message_bytes()
 				print(f"{datetime.utcnow()}: written_message: {expected_written_message}")
 				expected_messages_semaphore.acquire()
 				expected_messages.append(expected_written_message)
@@ -618,7 +618,7 @@ class KafkaManagerTest(unittest.TestCase):
 			print(f"{datetime.utcnow()}: reading")
 			kafka_reader_async_handle = kafka_reader.read_message()
 			print(f"{datetime.utcnow()}: getting result")
-			read_message = kafka_reader_async_handle.get_result()
+			read_message = kafka_reader_async_handle.get_result().get_message_bytes()
 			print(f"{datetime.utcnow()}: read message: {read_message}")
 			read_messages_semaphore.acquire()
 			read_messages.append(read_message)
@@ -682,12 +682,12 @@ class KafkaManagerTest(unittest.TestCase):
 			is_from_beginning=True
 		).get_result()  # type: KafkaReader
 
-		first_message = kafka_reader.read_message().get_result()  # type: bytes
+		first_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
 
 		print(f"first_message: {first_message}")
-		self.assertEqual(b"first", first_message)
+		self.assertEqual(b"first", first_message.get_message_bytes())
 
-		seek_index = kafka_reader.get_seek_index().get_result()  # type: KafkaReaderSeekIndex
+		seek_index = kafka_reader.get_seek_index().get_result()  # type: KafkaPartitionSeekIndex
 
 		print(f"seek_index.get_partition_indexes(): {seek_index.get_partition_indexes()}")
 		self.assertEqual((1,), seek_index.get_partition_indexes())
@@ -699,7 +699,52 @@ class KafkaManagerTest(unittest.TestCase):
 			message_bytes=b"fourth"
 		).get_result()
 
-		fourth_message = kafka_reader.read_message().get_result()  # type: bytes
+		fourth_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
 
 		print(f"fourth_message: {fourth_message}")
-		self.assertEqual(b"fourth", fourth_message)
+		self.assertEqual(b"fourth", fourth_message.get_message_bytes())
+
+	def test_read_message_then_reset_to_message_seek_index_and_read_again(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		for index in range(100):
+			kafka_manager.get_async_writer().write_message(
+				topic_name=topic_name,
+				message_bytes=b"left side"
+			).get_result()
+
+		written_kafka_message = kafka_manager.get_async_writer().write_message(
+			topic_name=topic_name,
+			message_bytes=b"test"
+		).get_result()  # type: KafkaMessage
+
+		for index in range(100):
+			kafka_manager.get_async_writer().write_message(
+				topic_name=topic_name,
+				message_bytes=b"right side"
+			).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_reader.set_seek_index(
+			kafka_topic_seek_index=kafka_manager.get_kafka_topic_seek_index_from_kafka_message(
+				kafka_message=written_kafka_message
+			)
+		)
+
+		read_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
+
+		self.assertEqual(written_kafka_message.get_message_bytes(), read_message.get_message_bytes())
+		self.assertEqual(written_kafka_message.get_topic_name(), read_message.get_topic_name())
+		self.assertEqual(written_kafka_message.get_offset(), read_message.get_offset())
+		self.assertEqual(written_kafka_message.get_partition_index(), read_message.get_partition_index())
