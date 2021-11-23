@@ -736,9 +736,9 @@ class KafkaManager():
 
 		return async_handle
 
-	def get_messages(self, *, topic_name: str, end_of_topic_read_timeout_seconds: float) -> List[bytes]:
+	def get_messages(self, *, topic_name: str, end_of_topic_read_timeout_seconds: float) -> List[KafkaMessage]:
 
-		messages = []  # type: List[bytes]
+		messages = []  # type: List[KafkaMessage]
 
 		kafka_reader = self.get_reader(
 			topic_name=topic_name,
