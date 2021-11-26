@@ -537,7 +537,6 @@ class KafkaBroker():
 		# TODO return if broker still exists
 		raise NotImplementedError()
 
-
 # TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
 class KafkaManager():
 
@@ -771,4 +770,27 @@ class KafkaManager():
 		return KafkaTopicSeekIndex(
 			topic_name=kafka_message.get_topic_name(),
 			partition_indexes=tuple(partition_indexes)
+		)
+
+
+class KafkaManagerFactory():
+
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
+
+		self.__kafka_wrapper = kafka_wrapper
+		self.__read_polling_seconds = read_polling_seconds
+		self.__is_cancelled_polling_seconds = is_cancelled_polling_seconds
+		self.__new_topic_partitions_total = new_topic_partitions_total
+		self.__new_topic_replication_factor = new_topic_replication_factor
+		self.__remove_topic_cluster_propagation_blocking_timeout_seconds = remove_topic_cluster_propagation_blocking_timeout_seconds
+
+	def get_kafka_manager(self) -> KafkaManager:
+
+		return KafkaManager(
+			kafka_wrapper=self.__kafka_wrapper,
+			read_polling_seconds=self.__read_polling_seconds,
+			is_cancelled_polling_seconds=self.__is_cancelled_polling_seconds,
+			new_topic_partitions_total=self.__new_topic_partitions_total,
+			new_topic_replication_factor=self.__new_topic_replication_factor,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=self.__remove_topic_cluster_propagation_blocking_timeout_seconds
 		)
