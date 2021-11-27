@@ -748,3 +748,36 @@ class KafkaManagerTest(unittest.TestCase):
 		self.assertEqual(written_kafka_message.get_topic_name(), read_message.get_topic_name())
 		self.assertEqual(written_kafka_message.get_offset(), read_message.get_offset())
 		self.assertEqual(written_kafka_message.get_partition_index(), read_message.get_partition_index())
+
+	def test_read_write_efficiency(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()
+
+		kafka_writer = kafka_manager.get_async_writer()
+
+		trials = []  # type: List[float]
+		for index in range(10000):
+			start_time = datetime.utcnow()
+			kafka_writer.write_message(
+				topic_name=topic_name,
+				message_bytes=f"index:{index}".encode()
+			)
+			kafka_reader.read_message()
+			end_time = datetime.utcnow()
+			trials.append((end_time - start_time).total_seconds())
+
+		#print(f"Trials: {trials}")
+		print(f"Max: {max(trials)} at {trials.index(max(trials))} which is {1.0/max(trials)} in a second")
+		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
+		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
