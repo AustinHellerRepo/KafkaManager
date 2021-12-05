@@ -1,5 +1,5 @@
 import unittest
-from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaTopicSeekIndex, KafkaMessage
+from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaTopicSeekIndex, KafkaMessage, KafkaAsyncWriter, KafkaTransactionalWriter
 from austin_heller_repo.threading import start_thread, Semaphore, BooleanReference, AsyncHandle
 import uuid
 import time
@@ -16,7 +16,7 @@ def get_default_kafka_manager() -> KafkaManager:
 
 	kafka_manager = KafkaManager(
 		kafka_wrapper=kafka_wrapper,
-		read_polling_seconds=1.0,
+		read_polling_seconds=0.01,
 		is_cancelled_polling_seconds=0.01,
 		new_topic_partitions_total=1,
 		new_topic_replication_factor=1,
@@ -36,7 +36,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		print(f"setUp: initialized: {datetime.utcnow()}")
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()  # type: List[str]
 
 		print(f"setUp: get_topics: {datetime.utcnow()}")
 
@@ -64,7 +64,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		kafka_manager = get_default_kafka_manager()
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()
 
 		print(f"topics: {topics}")
 
@@ -84,7 +84,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual(topic_name, added_topic_name)
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()
 
 		self.assertEqual((topic_name,), topics)
 
@@ -94,11 +94,44 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual(topic_name, removed_topic_name)
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()
 
 		self.assertEqual((), topics)
 
-	def test_write_and_read_from_topic_transactional(self):
+	def test_write_and_read_transactional_once(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		print(f"topic_name: {topic_name}")
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		expected_message_bytes = b"expected"
+
+		kafka_writer = kafka_manager.get_transactional_writer().get_result()  # type: KafkaTransactionalWriter
+
+		write_message = kafka_writer.write_message(
+			topic_name=topic_name,
+			message_bytes=expected_message_bytes
+		).get_result()  # type: KafkaMessage
+
+		kafka_writer.end_write_transaction()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		read_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
+
+		self.assertEqual(expected_message_bytes, write_message.get_message_bytes())
+		self.assertEqual(expected_message_bytes, read_message.get_message_bytes())
+
+	def TODO__test_write_and_read_from_topic_transactional(self):
 
 		kafka_manager = get_default_kafka_manager()
 
@@ -117,7 +150,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal unexpected_message
 			nonlocal unexpected_written_message
 
-			kafka_writer = kafka_manager.get_transactional_writer()
+			kafka_writer = kafka_manager.get_transactional_writer().get_result()  # type: KafkaTransactionalWriter
 
 			write_message_async_handle = kafka_writer.write_message(
 				topic_name=topic_name,
@@ -152,7 +185,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal expected_messages_semaphore
 
 			for index in range(10):
-				kafka_writer = kafka_manager.get_transactional_writer()
+				kafka_writer = kafka_manager.get_transactional_writer().get_result()  # type: KafkaTransactionalWriter
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
 					message_bytes=f"message #{index}".encode()
@@ -230,7 +263,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal unexpected_message
 			nonlocal unexpected_written_message
 
-			kafka_writer = kafka_manager.get_async_writer()
+			kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 
 			write_message_async_handle = kafka_writer.write_message(
 				topic_name=topic_name,
@@ -265,7 +298,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal expected_messages_semaphore
 
 			for index in range(10):
-				kafka_writer = kafka_manager.get_async_writer()
+				kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
 					message_bytes=f"message #{index}".encode()
@@ -338,7 +371,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual(topic_name, added_topic_name)
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()
 
 		self.assertEqual((topic_name,), topics)
 
@@ -388,7 +421,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual(topic_name, removed_topic_name)
 
-		topics = kafka_manager.get_topics()
+		topics = kafka_manager.get_topics().get_result()
 
 		self.assertEqual((), topics)
 
@@ -402,7 +435,7 @@ class KafkaManagerTest(unittest.TestCase):
 			topic_name=topic_name
 		).get_result()
 
-		kafka_writer = kafka_manager.get_async_writer()
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 
 		kafka_writer.write_message(
 			topic_name=topic_name,
@@ -456,7 +489,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal unexpected_message
 			nonlocal unexpected_written_message
 
-			kafka_writer = kafka_manager.get_async_writer()
+			kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 
 			write_message_async_handle = kafka_writer.write_message(
 				topic_name=topic_name,
@@ -492,7 +525,7 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal expected_messages_semaphore
 
 			for index in range(10):
-				kafka_writer = kafka_manager.get_async_writer()
+				kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
 					message_bytes=f"message #{index}".encode()
@@ -589,8 +622,8 @@ class KafkaManagerTest(unittest.TestCase):
 			nonlocal expected_messages_semaphore
 			nonlocal messages_total
 
+			kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 			for index in range(messages_total):
-				kafka_writer = kafka_manager.get_async_writer()
 				write_message_async_handle = kafka_writer.write_message(
 					topic_name=topic_name,
 					message_bytes=f"message #{index}".encode()
@@ -654,7 +687,7 @@ class KafkaManagerTest(unittest.TestCase):
 
 		kafka_manager = get_default_kafka_manager()
 
-		kafka_writer = kafka_manager.get_async_writer()
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 
 		topic_name = str(uuid.uuid4())
 
@@ -715,18 +748,18 @@ class KafkaManagerTest(unittest.TestCase):
 		).get_result()
 
 		for index in range(100):
-			kafka_manager.get_async_writer().write_message(
+			kafka_manager.get_async_writer().get_result().write_message(
 				topic_name=topic_name,
 				message_bytes=b"left side"
 			).get_result()
 
-		written_kafka_message = kafka_manager.get_async_writer().write_message(
+		written_kafka_message = kafka_manager.get_async_writer().get_result().write_message(
 			topic_name=topic_name,
 			message_bytes=b"test"
 		).get_result()  # type: KafkaMessage
 
 		for index in range(100):
-			kafka_manager.get_async_writer().write_message(
+			kafka_manager.get_async_writer().get_result().write_message(
 				topic_name=topic_name,
 				message_bytes=b"right side"
 			).get_result()
@@ -739,7 +772,7 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_reader.set_seek_index(
 			kafka_topic_seek_index=kafka_manager.get_kafka_topic_seek_index_from_kafka_message(
 				kafka_message=written_kafka_message
-			)
+			).get_result()
 		)
 
 		read_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
@@ -749,7 +782,7 @@ class KafkaManagerTest(unittest.TestCase):
 		self.assertEqual(written_kafka_message.get_offset(), read_message.get_offset())
 		self.assertEqual(written_kafka_message.get_partition_index(), read_message.get_partition_index())
 
-	def test_read_write_efficiency(self):
+	def test_read_write_efficiency_sequential_sync(self):
 
 		kafka_manager = get_default_kafka_manager()
 
@@ -762,18 +795,153 @@ class KafkaManagerTest(unittest.TestCase):
 		kafka_reader = kafka_manager.get_reader(
 			topic_name=topic_name,
 			is_from_beginning=True
-		).get_result()
+		).get_result()  # type: KafkaReader
 
-		kafka_writer = kafka_manager.get_async_writer()
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
 
 		trials = []  # type: List[float]
-		for index in range(10000):
+		writes = []  # type: List[float]
+		reads = []  # type: List[float]
+		for index in range(20):
 			start_time = datetime.utcnow()
 			kafka_writer.write_message(
 				topic_name=topic_name,
-				message_bytes=f"index:{index}".encode()
-			)
-			kafka_reader.read_message()
+				message_bytes=f"i:{index}".encode()
+			).get_result()
+			write_time = datetime.utcnow()
+			kafka_reader.read_message().get_result()
+			end_time = datetime.utcnow()
+			trials.append((end_time - start_time).total_seconds())
+			writes.append((write_time - start_time).total_seconds())
+			reads.append((end_time - write_time).total_seconds())
+
+		#print(f"Trials: {trials}")
+		print("Totals:")
+		print(f"Max: {max(trials)} at {trials.index(max(trials))} which is {1.0/max(trials)} in a second")
+		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
+		trials.remove(max(trials))
+		trials.remove(min(trials))
+		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
+		print("Writes:")
+		print(f"Max: {max(writes)} at {writes.index(max(writes))} which is {1.0/max(writes)} in a second")
+		print(f"Min: {min(writes)} at {writes.index(min(writes))} which is {1.0/min(writes)} in a second")
+		writes.remove(max(writes))
+		writes.remove(min(writes))
+		print(f"Ave: {sum(writes)/len(writes)} which is {1.0/(sum(writes)/len(writes))} in a second")
+		print("Reads:")
+		print(f"Max: {max(reads)} at {reads.index(max(reads))} which is {1.0/max(reads)} in a second")
+		print(f"Min: {min(reads)} at {reads.index(min(reads))} which is {1.0/min(reads)} in a second")
+		reads.remove(max(reads))
+		reads.remove(min(reads))
+		print(f"Ave: {sum(reads)/len(reads)} which is {1.0/(sum(reads)/len(reads))} in a second")
+
+	def test_read_write_efficiency_write_then_read(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+		writes = []  # type: List[float]
+		for index in range(20):
+			start_time = datetime.utcnow()
+			kafka_writer.write_message(
+				topic_name=topic_name,
+				message_bytes=f"i:{index}".encode()
+			).get_result()
+			end_time = datetime.utcnow()
+			writes.append((end_time - start_time).total_seconds())
+
+		reads = []  # type: List[float]
+		for index in range(20):
+			start_time = datetime.utcnow()
+			kafka_reader.read_message().get_result()
+			end_time = datetime.utcnow()
+			reads.append((end_time - start_time).total_seconds())
+
+		print("Writes:")
+		print(f"Max: {max(writes)} at {writes.index(max(writes))} which is {1.0/max(writes)} in a second")
+		print(f"Min: {min(writes)} at {writes.index(min(writes))} which is {1.0/min(writes)} in a second")
+		writes.remove(max(writes))
+		writes.remove(min(writes))
+		print(f"Ave: {sum(writes)/len(writes)} which is {1.0/(sum(writes)/len(writes))} in a second")
+		print("Reads:")
+		print(f"Max: {max(reads)} at {reads.index(max(reads))} which is {1.0/max(reads)} in a second")
+		print(f"Min: {min(reads)} at {reads.index(min(reads))} which is {1.0/min(reads)} in a second")
+		reads.remove(max(reads))
+		reads.remove(min(reads))
+		print(f"Ave: {sum(reads)/len(reads)} which is {1.0/(sum(reads)/len(reads))} in a second")
+
+	def test_read_write_efficiency_1KB(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+		trials = []  # type: List[float]
+		kilobyte_message_bytes = b"12345678" * 128
+		for index in range(100):
+			start_time = datetime.utcnow()
+			kafka_writer.write_message(
+				topic_name=topic_name,
+				message_bytes=kilobyte_message_bytes
+			).get_result()
+			kafka_reader.read_message().get_result()
+			end_time = datetime.utcnow()
+			trials.append((end_time - start_time).total_seconds())
+
+		#print(f"Trials: {trials}")
+		print(f"Max: {max(trials)} at {trials.index(max(trials))} which is {1.0/max(trials)} in a second")
+		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
+		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
+
+	def test_read_write_efficiency_10KB(self):
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+		trials = []  # type: List[float]
+		kilobyte_message_bytes = b"12345678" * 128 * 10
+		for index in range(100):
+			start_time = datetime.utcnow()
+			kafka_writer.write_message(
+				topic_name=topic_name,
+				message_bytes=kilobyte_message_bytes
+			).get_result()
+			kafka_reader.read_message().get_result()
 			end_time = datetime.utcnow()
 			trials.append((end_time - start_time).total_seconds())
 

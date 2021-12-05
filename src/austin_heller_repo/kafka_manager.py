@@ -150,6 +150,15 @@ class KafkaTopicSeekIndex():
 	def get_partition_indexes(self) -> Tuple[int]:
 		return self.__partition_indexes
 
+	def __eq__(self, other):
+		if type(other) is type(self):
+			return (self.__topic_name, self.__partition_indexes) == (other.__topic_name, other.__partition_indexes)
+		else:
+			return False
+
+	def __hash__(self):
+		return hash((self.__topic_name, self.__partition_indexes))
+
 
 class KafkaMessage():
 
@@ -180,6 +189,8 @@ class KafkaAsyncWriter():
 		self.__kafka_manager = kafka_manager
 		self.__producer = producer
 
+		self.__partitions_total = None
+
 	def write_message(self, *, topic_name: str, message_bytes: bytes) -> AsyncHandle:
 
 		if not isinstance(message_bytes, bytes):
@@ -190,11 +201,41 @@ class KafkaAsyncWriter():
 		callback_semaphore = Semaphore()
 		callback_semaphore.acquire()
 
-		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> bytes:
+		def callback(error: KafkaError, message: Message):
+			nonlocal callback_error
+			nonlocal callback_message
+			nonlocal callback_semaphore
+
+			callback_error = error
+			callback_message = message
+
+			if callback_error is None and callback_message.error() is not None:
+				callback_error = callback_message.error()
+
+			callback_semaphore.release()
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaMessage:
 			nonlocal callback_error
 			nonlocal callback_message
 			nonlocal callback_semaphore
 			nonlocal topic_name
+
+			if self.__partitions_total is None:
+				kafka_partitions_async_handle = self.__kafka_manager.get_partitions(
+					topic_name=topic_name
+				)
+				kafka_partitions_async_handle.add_parent(
+					async_handle=read_only_async_handle
+				)
+				kafka_partitions = kafka_partitions_async_handle.get_result()  # type: List[KafkaPartition]
+
+				if not read_only_async_handle.is_cancelled():
+					self.__partitions_total = len(kafka_partitions)
+
+			# TODO ensure that the KafkaTransactionalWriter can write each message to the same partition to ensure order
+			random_partition_index = random.randrange(self.__partitions_total)
+
+			self.__producer.produce(topic_name, message_bytes, partition=random_partition_index, callback=callback)
 
 			self.__producer.flush()
 
@@ -211,10 +252,9 @@ class KafkaAsyncWriter():
 				callback_semaphore.release()
 
 			wait_thread = start_thread(wait_thread_method)
-
 			while is_waiting:
 				if not read_only_async_handle.is_cancelled():
-					time.sleep(0.01)
+					time.sleep(0.001)  # TODO restructure to not poll
 
 			# finished waiting at this point
 
@@ -229,30 +269,11 @@ class KafkaAsyncWriter():
 				)
 				return kafka_message
 
-		def callback(error: KafkaError, message: Message):
-			nonlocal callback_error
-			nonlocal callback_message
-			nonlocal callback_semaphore
-
-			callback_error = error
-			callback_message = message
-
-			if callback_error is None and callback_message.error() is not None:
-				callback_error = callback_message.error()
-
-			callback_semaphore.release()
-
-		kafka_partitions = self.__kafka_manager.get_partitions(
-			topic_name=topic_name
-		)
-
-		# TODO ensure that the KafkaTransactionalWriter can write each message to the same partition to ensure order
-		random_partition_index = random.randrange(len(kafka_partitions))
-
-		self.__producer.produce(topic_name, message_bytes, partition=random_partition_index, callback=callback)
-
 		async_handle = AsyncHandle(
-			get_result_method=get_result_method
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
 		)
 
 		return async_handle
@@ -368,7 +389,6 @@ class KafkaReader():
 					topic_name=self.__topic_name,
 					partition_indexes=tuple(partition_indexes)
 				)
-			#return self.__consumer.position([self.__topic_partition])[0].offset
 
 		async_handle = AsyncHandle(
 			get_result_method=get_result
@@ -537,7 +557,7 @@ class KafkaBroker():
 		# TODO return if broker still exists
 		raise NotImplementedError()
 
-# TODO each read will need to be checked against a db to ensure that this project has already read this topic's partition's message offset
+
 class KafkaManager():
 
 	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
@@ -563,7 +583,7 @@ class KafkaManager():
 
 			added_topic = None  # type: NewTopic
 
-			def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
+			def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
 				nonlocal future_per_topic
 				nonlocal added_topic
 				nonlocal admin_client
@@ -578,7 +598,12 @@ class KafkaManager():
 					added_topic = topic
 
 					while not read_only_async_handle.is_cancelled():
-						all_topics = self.get_topics()
+						all_topics_async_handle = self.get_topics()
+						all_topics_async_handle.add_parent(
+							async_handle=read_only_async_handle
+						)
+						all_topics = all_topics_async_handle.get_result()  # type: List[str]
+
 						if added_topic not in all_topics:
 							time.sleep(self.__is_cancelled_polling_seconds)
 						else:
@@ -587,9 +612,11 @@ class KafkaManager():
 				return added_topic
 
 			async_handle = AsyncHandle(
-				get_result_method=get_result_method
+				get_result_method=get_result
 			)
-			# TODO consider initiating with async_handle.try_wait 0
+			async_handle.try_wait(
+				timeout_seconds=0
+			)
 
 			return async_handle
 
@@ -605,7 +632,7 @@ class KafkaManager():
 
 			removed_topic = None  # type: NewTopic
 
-			def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
+			def get_result(read_only_async_handle: ReadOnlyAsyncHandle) -> str:
 				nonlocal future_per_topic
 				nonlocal removed_topic
 				nonlocal admin_client
@@ -620,7 +647,12 @@ class KafkaManager():
 					removed_topic = topic
 
 					while not read_only_async_handle.is_cancelled():
-						all_topics = self.get_topics()
+						all_topics_async_handle = self.get_topics()
+						all_topics_async_handle.add_parent(
+							async_handle=read_only_async_handle
+						)
+						all_topics = all_topics_async_handle.get_result()  # type: List[str]
+
 						if removed_topic in all_topics:
 							time.sleep(self.__is_cancelled_polling_seconds)
 						else:
@@ -629,80 +661,144 @@ class KafkaManager():
 				return removed_topic
 
 			async_handle = AsyncHandle(
-				get_result_method=get_result_method
+				get_result_method=get_result
+			)
+			async_handle.try_wait(
+				timeout_seconds=0
 			)
 
 			return async_handle
 
-	def get_topics(self) -> Tuple[str]:
+	def get_topics(self) -> AsyncHandle:
 
-		admin_client = self.__kafka_wrapper.get_admin_client()
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			topics = None  # type: Tuple[str]
+			if not read_only_async_handle.is_cancelled():
+				admin_client = self.__kafka_wrapper.get_admin_client()
+				if not read_only_async_handle.is_cancelled():
+					topic_list = admin_client.list_topics()
+					if not read_only_async_handle.is_cancelled():
+						topics_per_topic_name = topic_list.topics
+						if not read_only_async_handle.is_cancelled():
+							topics = tuple([topic_name for topic_name in topics_per_topic_name.keys() if not topic_name.startswith("__")])
+			return topics
 
-		topic_list = admin_client.list_topics()
-
-		topics_per_topic_name = topic_list.topics
-
-		topics = tuple([topic_name for topic_name in topics_per_topic_name.keys() if not topic_name.startswith("__")])
-
-		return topics
-
-	def get_partitions(self, *, topic_name: str) -> List[KafkaPartition]:
-
-		admin_client = self.__kafka_wrapper.get_admin_client()
-
-		topic_list = admin_client.list_topics()
-
-		if topic_name not in topic_list.topics.keys():
-			raise TopicNotFoundException(f"Topic name: \"{topic_name}\".")
-
-		kafka_partitions = []  # type: List[KafkaPartition]
-		for partition_kafka_id in topic_list.topics[topic_name].partitions:
-			kafka_partition = KafkaPartition(
-				kafka_wrapper=self.__kafka_wrapper,
-				kafka_partition_id=partition_kafka_id,
-				topic_name=topic_name,
-				leader_broker_id=topic_list.topics[topic_name].partitions[partition_kafka_id].leader,
-				replicated_broker_ids=topic_list.topics[topic_name].partitions[partition_kafka_id].replicas
-			)
-			kafka_partitions.append(kafka_partition)
-		return kafka_partitions
-
-	def get_brokers(self) -> List[KafkaBroker]:
-
-		admin_client = self.__kafka_wrapper.get_admin_client()
-
-		topic_list = admin_client.list_topics()
-
-		kafka_brokers = []  # type: List[KafkaBroker]
-		for kafka_broker_id in topic_list.brokers:
-			kafka_broker = KafkaBroker(
-				kafka_wrapper=self.__kafka_wrapper,
-				kafka_broker_id=kafka_broker_id,
-				host_url=topic_list.brokers[kafka_broker_id].host,
-				host_port=topic_list.brokers[kafka_broker_id].port
-			)
-			kafka_brokers.append(kafka_broker)
-		return kafka_brokers
-
-	def get_async_writer(self) -> KafkaAsyncWriter:
-
-		producer = self.__kafka_wrapper.get_producer(
-			is_transactional=False
+		async_handle = AsyncHandle(
+			get_result_method=get_result
 		)
-		return KafkaAsyncWriter(
-			kafka_manager=self,
-			producer=producer
+		async_handle.try_wait(
+			timeout_seconds=0
 		)
 
-	def get_transactional_writer(self) -> KafkaTransactionalWriter:
+		return async_handle
 
-		producer = self.__kafka_wrapper.get_producer(
-			is_transactional=True
+	def get_partitions(self, *, topic_name: str) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			kafka_partitions = None  # type: List[KafkaPartition]
+			if not read_only_async_handle.is_cancelled():
+				admin_client = self.__kafka_wrapper.get_admin_client()
+				if not read_only_async_handle.is_cancelled():
+					topic_list = admin_client.list_topics()
+					if not read_only_async_handle.is_cancelled():
+						if topic_name not in topic_list.topics.keys():
+							raise TopicNotFoundException(f"Topic name: \"{topic_name}\".")
+						else:
+							kafka_partitions = []
+							for partition_kafka_id in topic_list.topics[topic_name].partitions:
+								kafka_partition = KafkaPartition(
+									kafka_wrapper=self.__kafka_wrapper,
+									kafka_partition_id=partition_kafka_id,
+									topic_name=topic_name,
+									leader_broker_id=topic_list.topics[topic_name].partitions[partition_kafka_id].leader,
+									replicated_broker_ids=topic_list.topics[topic_name].partitions[partition_kafka_id].replicas
+								)
+								kafka_partitions.append(kafka_partition)
+			return kafka_partitions
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
 		)
-		return KafkaTransactionalWriter(
-			kafka_manager=self,
-			producer=producer
+		async_handle.try_wait(
+			timeout_seconds=0
 		)
+
+		return async_handle
+
+	def get_brokers(self) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			kafka_brokers = None  # type: List[KafkaBroker]
+			if not read_only_async_handle.is_cancelled():
+				admin_client = self.__kafka_wrapper.get_admin_client()
+				if not read_only_async_handle.is_cancelled():
+					topic_list = admin_client.list_topics()
+					if not read_only_async_handle.is_cancelled():
+						kafka_brokers = []
+						for kafka_broker_id in topic_list.brokers:
+							kafka_broker = KafkaBroker(
+								kafka_wrapper=self.__kafka_wrapper,
+								kafka_broker_id=kafka_broker_id,
+								host_url=topic_list.brokers[kafka_broker_id].host,
+								host_port=topic_list.brokers[kafka_broker_id].port
+							)
+							kafka_brokers.append(kafka_broker)
+			return kafka_brokers
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
+
+	def get_async_writer(self) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			kafka_writer = None
+			if not read_only_async_handle.is_cancelled():
+				producer = self.__kafka_wrapper.get_producer(
+					is_transactional=False
+				)
+				if not read_only_async_handle.is_cancelled():
+					kafka_writer = KafkaAsyncWriter(
+						kafka_manager=self,
+						producer=producer
+					)
+			return kafka_writer
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
+
+	def get_transactional_writer(self) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			kafka_writer = None
+			if not read_only_async_handle.is_cancelled():
+				producer = self.__kafka_wrapper.get_producer(
+					is_transactional=True
+				)
+				if not read_only_async_handle.is_cancelled():
+					kafka_writer = KafkaTransactionalWriter(
+						kafka_manager=self,
+						producer=producer
+					)
+			return kafka_writer
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
 
 	def get_reader(self, *, topic_name: str, is_from_beginning: bool) -> AsyncHandle:
 
@@ -713,7 +809,7 @@ class KafkaManager():
 			)
 
 			while len(consumer.assignment()) == 0 and not read_only_async_handle.is_cancelled():
-				time.sleep(0.1)
+				time.sleep(0.01)
 
 			if read_only_async_handle.is_cancelled():
 				kafka_reader = None
@@ -735,42 +831,83 @@ class KafkaManager():
 
 		return async_handle
 
-	def get_messages(self, *, topic_name: str, end_of_topic_read_timeout_seconds: float) -> List[KafkaMessage]:
+	def get_messages(self, *, topic_name: str, end_of_topic_read_timeout_seconds: float) -> AsyncHandle:
 
-		messages = []  # type: List[KafkaMessage]
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			if not read_only_async_handle.is_cancelled():
+				messages = []  # type: List[KafkaMessage]
 
-		kafka_reader = self.get_reader(
-			topic_name=topic_name,
-			is_from_beginning=True
-		).get_result()  # type: KafkaReader
+				kafka_reader_async_handle = self.get_reader(
+					topic_name=topic_name,
+					is_from_beginning=True
+				)
+				kafka_reader_async_handle.add_parent(
+					async_handle=read_only_async_handle
+				)
+				kafka_reader = kafka_reader_async_handle.get_result()  # type: KafkaReader
 
-		is_last_message_found = False
-		while not is_last_message_found:
-			message = kafka_reader.try_read_message(
-				timeout_seconds=end_of_topic_read_timeout_seconds
-			).get_result()
+				if not read_only_async_handle.is_cancelled():
+					is_last_message_found = False
+					while not is_last_message_found:
+						message_async_handle = kafka_reader.try_read_message(
+							timeout_seconds=end_of_topic_read_timeout_seconds
+						)
+						message_async_handle.add_parent(
+							async_handle=read_only_async_handle
+						)
+						message = message_async_handle.get_result()  # type: KafkaMessage
 
-			if message is None:
-				is_last_message_found = True
-			else:
-				messages.append(message)
+						if not read_only_async_handle.is_cancelled():
+							if message is None:
+								is_last_message_found = True
+							else:
+								messages.append(message)
+				return messages
 
-		return messages
-
-	def get_kafka_topic_seek_index_from_kafka_message(self, kafka_message: KafkaMessage) -> KafkaTopicSeekIndex:
-		partition_indexes = []  # type: List[int]
-		for topic_partition_index, topic_partition in enumerate(self.get_partitions(
-			topic_name=kafka_message.get_topic_name()
-		)):
-			if topic_partition_index == kafka_message.get_partition_index():
-				seek_index = kafka_message.get_offset()
-			else:
-				seek_index = OFFSET_END
-			partition_indexes.append(seek_index)
-		return KafkaTopicSeekIndex(
-			topic_name=kafka_message.get_topic_name(),
-			partition_indexes=tuple(partition_indexes)
+		async_handle = AsyncHandle(
+			get_result_method=get_result
 		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
+
+	def get_kafka_topic_seek_index_from_kafka_message(self, kafka_message: KafkaMessage) -> AsyncHandle:
+
+		def get_result(read_only_async_handle: ReadOnlyAsyncHandle):
+			kafka_topic_seek_index = None  # type: KafkaTopicSeekIndex
+			if not read_only_async_handle.is_cancelled():
+				partition_indexes = []  # type: List[int]
+				partitions_async_handle = self.get_partitions(
+					topic_name=kafka_message.get_topic_name()
+				)
+				partitions_async_handle.add_parent(
+					async_handle=read_only_async_handle
+				)
+				partitions = partitions_async_handle.get_result()  # type: List[KafkaPartition]
+
+				if not read_only_async_handle.is_cancelled():
+					for topic_partition_index, topic_partition in enumerate(partitions):
+						if topic_partition_index == kafka_message.get_partition_index():
+							seek_index = kafka_message.get_offset()
+						else:
+							seek_index = OFFSET_END
+						partition_indexes.append(seek_index)
+					kafka_topic_seek_index = KafkaTopicSeekIndex(
+						topic_name=kafka_message.get_topic_name(),
+						partition_indexes=tuple(partition_indexes)
+					)
+			return kafka_topic_seek_index
+
+		async_handle = AsyncHandle(
+			get_result_method=get_result
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+
+		return async_handle
 
 
 class KafkaManagerFactory():

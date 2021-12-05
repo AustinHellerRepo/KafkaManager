@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: kafka-manager-austinhellerrepo
-Version: 0.2.2
+Version: 0.2.3
 Summary: A basic wrapper of Kafka functionality
 Home-page: https://github.com/AustinHellerRepo/KafkaManager
 Author: Austin Heller
