@@ -94,7 +94,10 @@ class KafkaWrapper():
 			self.__async_producer_semaphore.acquire()
 			if self.__async_producer is None:
 				self.__async_producer = Producer({
-					"bootstrap.servers": self.__get_bootstrap_servers()
+					"bootstrap.servers": self.__get_bootstrap_servers(),
+					"batch.num.messages": 1
+					#"batch.size": 1
+					#"linger.ms": 1
 				})
 			self.__async_producer_semaphore.release()
 			producer = self.__async_producer
@@ -109,7 +112,7 @@ class KafkaWrapper():
 			"bootstrap.servers": self.__get_bootstrap_servers(),
 			"group.id": str(uuid.uuid4()),
 			"auto.offset.reset": "earliest" if is_from_beginning else "latest",
-			"queued.min.messages": 1
+			#"queued.min.messages": 1
 		})
 
 		admin_client = self.get_admin_client()

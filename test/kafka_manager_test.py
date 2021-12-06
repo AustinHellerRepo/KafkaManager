@@ -5,6 +5,8 @@ import uuid
 import time
 from datetime import datetime
 from typing import List, Tuple, Dict
+import matplotlib.pyplot as plt
+import matplotlib
 
 
 def get_default_kafka_manager() -> KafkaManager:
@@ -16,8 +18,8 @@ def get_default_kafka_manager() -> KafkaManager:
 
 	kafka_manager = KafkaManager(
 		kafka_wrapper=kafka_wrapper,
-		read_polling_seconds=0.01,
-		is_cancelled_polling_seconds=0.01,
+		read_polling_seconds=0.001,
+		is_cancelled_polling_seconds=0.001,
 		new_topic_partitions_total=1,
 		new_topic_replication_factor=1,
 		remove_topic_cluster_propagation_blocking_timeout_seconds=30
@@ -727,6 +729,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		kafka_reader.set_seek_index_to_end().get_result()
 
+		time.sleep(0.5)  # TODO since the queued.min.messages (not being 1 due to inefficiencies) is probably pulling in the next message, this delay is necessary
+
 		kafka_writer.write_message(
 			topic_name=topic_name,
 			message_bytes=b"fourth"
@@ -1046,6 +1050,21 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Max: {max(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(max(write_start_to_read_end_time_seconds))} which is {1.0 / max(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
+
+		if False:
+			write_time_seconds.remove(max(write_time_seconds))
+			plt.scatter(write_time_seconds, list(range(len(write_time_seconds))), c="blue", s=1)
+			plt.scatter(read_time_seconds, list(range(len(read_time_seconds))), c="red", s=1)
+			plt.scatter(write_start_to_read_end_time_seconds, list(range(len(write_start_to_read_end_time_seconds))), c="purple", s=1)
+			#plt.gcf().autofmt_xdate()
+			plt.show()
+
+			plt.scatter(write_start_times, list(range(len(write_start_times))), c="blue", s=1)
+			plt.scatter(write_end_times, list(range(len(write_end_times))), c="green", s=1)
+			plt.scatter(read_start_times, list(range(len(read_start_times))), c="red", s=1)
+			plt.scatter(read_end_times, list(range(len(read_end_times))), c="purple", s=1)
+			plt.gcf().autofmt_xdate()
+			plt.show()
 
 	def test_parallel_write_and_read_efficiency_multiple_writers(self):
 
