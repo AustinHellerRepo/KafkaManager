@@ -949,3 +949,226 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Max: {max(trials)} at {trials.index(max(trials))} which is {1.0/max(trials)} in a second")
 		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
 		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
+
+	def test_parallel_write_and_read_efficiency(self):
+
+		read_write_total = 1000
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		block_semaphore = Semaphore()
+		block_semaphore.acquire()
+
+		write_start_times = []  # type: List[datetime]
+		write_end_times = []  # type: List[datetime]
+
+		read_start_times = []  # type: List[datetime]
+		read_end_times = []  # type: List[datetime]
+
+		expected_message_bytes = b"test"
+
+		def write_thread_method():
+			nonlocal block_semaphore
+			nonlocal kafka_writer
+			nonlocal expected_message_bytes
+			nonlocal read_write_total
+
+			block_semaphore.acquire()
+			block_semaphore.release()
+
+			for index in range(read_write_total):
+				write_start_times.append(datetime.utcnow())
+				kafka_writer.write_message(
+					topic_name=topic_name,
+					message_bytes=expected_message_bytes
+				).get_result()
+				write_end_times.append(datetime.utcnow())
+
+		def read_thread_method():
+			nonlocal block_semaphore
+			nonlocal kafka_reader
+			nonlocal read_write_total
+
+			block_semaphore.acquire()
+			block_semaphore.release()
+
+			for index in range(read_write_total):
+				read_start_times.append(datetime.utcnow())
+				kafka_reader.read_message().get_result()
+				read_end_times.append(datetime.utcnow())
+
+		write_thread = start_thread(write_thread_method)
+		read_thread = start_thread(read_thread_method)
+
+		time.sleep(1.0)
+
+		block_semaphore.release()
+
+		write_thread.join()
+		read_thread.join()
+
+		write_time_seconds = []  # type: List[float]
+		read_time_seconds = []  # type: List[float]
+		write_start_to_read_end_time_seconds = []  # type: List[float]
+		for index in range(read_write_total):
+			write_time = (write_end_times[index] - write_start_times[index]).total_seconds()
+			read_time = (read_end_times[index] - read_start_times[index]).total_seconds()
+			write_start_to_read_end_time = (read_end_times[index] - write_start_times[index]).total_seconds()
+
+			write_time_seconds.append(write_time)
+			read_time_seconds.append(read_time)
+			write_start_to_read_end_time_seconds.append(write_start_to_read_end_time)
+
+		print(f"Writes:")
+		print(f"Max: {max(write_time_seconds)} at {write_time_seconds.index(max(write_time_seconds))} which is {1.0 / max(write_time_seconds)} in a second")
+		print(f"Min: {min(write_time_seconds)} at {write_time_seconds.index(min(write_time_seconds))} which is {1.0 / min(write_time_seconds)} in a second")
+		print(f"Ave: {sum(write_time_seconds) / len(write_time_seconds)} which is {1.0 / (sum(write_time_seconds) / len(write_time_seconds))} in a second")
+
+		print(f"Reads:")
+		print(f"Max: {max(read_time_seconds)} at {read_time_seconds.index(max(read_time_seconds))} which is {1.0 / max(read_time_seconds)} in a second")
+		print(f"Min: {min(read_time_seconds)} at {read_time_seconds.index(min(read_time_seconds))} which is {1.0 / min(read_time_seconds)} in a second")
+		print(f"Ave: {sum(read_time_seconds) / len(read_time_seconds)} which is {1.0 / (sum(read_time_seconds) / len(read_time_seconds))} in a second")
+
+		print(f"Write-to-Read:")
+		print(f"Max: {max(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(max(write_start_to_read_end_time_seconds))} which is {1.0 / max(write_start_to_read_end_time_seconds)} in a second")
+		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
+		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
+
+	def test_parallel_write_and_read_efficiency_multiple_writers(self):
+
+		read_write_total = 1000
+		unexpected_writers_total = 50
+
+		kafka_manager = get_default_kafka_manager()
+
+		topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=topic_name
+		).get_result()
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		block_semaphore = Semaphore()
+		block_semaphore.acquire()
+
+		write_start_times = []  # type: List[datetime]
+		write_end_times = []  # type: List[datetime]
+
+		read_start_times = []  # type: List[datetime]
+		read_end_times = []  # type: List[datetime]
+
+		expected_message_bytes = b"test"
+		unexpected_message_bytes = b"foobar"
+
+		def write_thread_method():
+			nonlocal block_semaphore
+			nonlocal kafka_writer
+			nonlocal expected_message_bytes
+			nonlocal read_write_total
+
+			block_semaphore.acquire()
+			block_semaphore.release()
+
+			for index in range(read_write_total):
+				write_start_times.append(datetime.utcnow())
+				kafka_writer.write_message(
+					topic_name=topic_name,
+					message_bytes=expected_message_bytes
+				).get_result()
+				write_end_times.append(datetime.utcnow())
+
+		def unexpected_write_thread_method():
+			nonlocal block_semaphore
+			nonlocal unexpected_message_bytes
+			nonlocal read_write_total
+			nonlocal kafka_manager
+
+			unexpected_kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+
+			block_semaphore.acquire()
+			block_semaphore.release()
+
+			for index in range(read_write_total):
+				unexpected_kafka_writer.write_message(
+					topic_name=topic_name,
+					message_bytes=unexpected_message_bytes
+				).get_result()
+
+		def read_thread_method():
+			nonlocal block_semaphore
+			nonlocal kafka_reader
+			nonlocal read_write_total
+			nonlocal unexpected_writers_total
+
+			block_semaphore.acquire()
+			block_semaphore.release()
+
+			for index in range(read_write_total * (unexpected_writers_total + 1)):
+				read_start_time = datetime.utcnow()
+				kafka_message = kafka_reader.read_message().get_result()  # type: KafkaMessage
+				read_end_time = datetime.utcnow()
+				if kafka_message.get_message_bytes() == expected_message_bytes:
+					read_start_times.append(read_start_time)
+					read_end_times.append(read_end_time)
+
+		write_thread = start_thread(write_thread_method)
+		read_thread = start_thread(read_thread_method)
+		unexpected_write_threads = []
+		for index in range(unexpected_writers_total):
+			unexpected_write_thread = start_thread(unexpected_write_thread_method)
+			unexpected_write_threads.append(unexpected_write_thread)
+
+		time.sleep(1.0)
+
+		block_semaphore.release()
+
+		write_thread.join()
+		read_thread.join()
+		for unexpected_write_thread in unexpected_write_threads:
+			unexpected_write_thread.join()
+
+		write_time_seconds = []  # type: List[float]
+		read_time_seconds = []  # type: List[float]
+		write_start_to_read_end_time_seconds = []  # type: List[float]
+		for index in range(read_write_total):
+			write_time = (write_end_times[index] - write_start_times[index]).total_seconds()
+			read_time = (read_end_times[index] - read_start_times[index]).total_seconds()
+			write_start_to_read_end_time = (read_end_times[index] - write_start_times[index]).total_seconds()
+
+			write_time_seconds.append(write_time)
+			read_time_seconds.append(read_time)
+			write_start_to_read_end_time_seconds.append(write_start_to_read_end_time)
+
+		print(f"Writes:")
+		print(f"Max: {max(write_time_seconds)} at {write_time_seconds.index(max(write_time_seconds))} which is {1.0 / max(write_time_seconds)} in a second")
+		print(f"Min: {min(write_time_seconds)} at {write_time_seconds.index(min(write_time_seconds))} which is {1.0 / min(write_time_seconds)} in a second")
+		print(f"Ave: {sum(write_time_seconds) / len(write_time_seconds)} which is {1.0 / (sum(write_time_seconds) / len(write_time_seconds))} in a second")
+
+		print(f"Reads:")
+		print(f"Max: {max(read_time_seconds)} at {read_time_seconds.index(max(read_time_seconds))} which is {1.0 / max(read_time_seconds)} in a second")
+		print(f"Min: {min(read_time_seconds)} at {read_time_seconds.index(min(read_time_seconds))} which is {1.0 / min(read_time_seconds)} in a second")
+		print(f"Ave: {sum(read_time_seconds) / len(read_time_seconds)} which is {1.0 / (sum(read_time_seconds) / len(read_time_seconds))} in a second")
+
+		print(f"Write-to-Read:")
+		print(f"Max: {max(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(max(write_start_to_read_end_time_seconds))} which is {1.0 / max(write_start_to_read_end_time_seconds)} in a second")
+		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
+		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
