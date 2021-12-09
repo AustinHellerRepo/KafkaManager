@@ -4,6 +4,7 @@ from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartit
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
 from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle
+from austin_heller_repo.common import HostPointer
 import uuid
 import random
 import time
@@ -55,10 +56,9 @@ class ReplicatedBrokersTotalMismatchException(Exception):
 
 class KafkaWrapper():
 
-	def __init__(self, *, host_url: str, host_port: int):
+	def __init__(self, *, host_pointer: HostPointer):
 
-		self.__host_url = host_url
-		self.__host_port = host_port
+		self.__host_pointer = host_pointer
 
 		self.__admin_client = None  # type: AdminClient
 		self.__admin_client_semaphore = Semaphore()
@@ -69,7 +69,7 @@ class KafkaWrapper():
 		self.__write_transaction = None
 
 	def __get_bootstrap_servers(self) -> str:
-		return f"{self.__host_url}:{self.__host_port}"
+		return f"{self.__host_pointer.get_host_address()}:{self.__host_pointer.get_host_port()}"
 
 	def get_admin_client(self) -> AdminClient:
 
@@ -486,8 +486,10 @@ class KafkaPartition():
 		kafka_broker = KafkaBroker(
 			kafka_wrapper=self.__kafka_wrapper,
 			kafka_broker_id=self.__leader_broker_id,
-			host_url=topic_list.brokers[self.__leader_broker_id].host,
-			host_port=topic_list.brokers[self.__leader_broker_id].port
+			host_pointer=HostPointer(
+				host_address=topic_list.brokers[self.__leader_broker_id].host,
+				host_port=topic_list.brokers[self.__leader_broker_id].port
+			)
 		)
 		return kafka_broker
 
@@ -503,8 +505,10 @@ class KafkaPartition():
 				kafka_broker = KafkaBroker(
 					kafka_wrapper=self.__kafka_wrapper,
 					kafka_broker_id=kafka_broker_id,
-					host_url=topic_list.brokers[kafka_broker_id].host,
-					host_port=topic_list.brokers[kafka_broker_id].port
+					host_pointer=HostPointer(
+						host_address=topic_list.brokers[kafka_broker_id].host,
+						host_port=topic_list.brokers[kafka_broker_id].port
+					)
 				)
 				kafka_brokers.append(kafka_broker)
 		if len(self.__replicated_broker_ids) != len(kafka_brokers):
@@ -524,18 +528,14 @@ class KafkaPartition():
 
 class KafkaBroker():
 
-	def __init__(self, *, kafka_wrapper: KafkaWrapper, kafka_broker_id: int, host_url: str, host_port: int):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, kafka_broker_id: int, host_pointer: HostPointer):
 
 		self.__kafka_wrapper = kafka_wrapper
 		self.__kafka_broker_id = kafka_broker_id
-		self.__host_url = host_url
-		self.__host_port = host_port
+		self.__host_pointer = host_pointer
 
-	def get_host_url(self) -> str:
-		return self.__host_url
-
-	def get_host_port(self) -> int:
-		return self.__host_port
+	def get_host_pointer(self) -> HostPointer:
+		return self.__host_pointer
 
 	def get_partition_per_topic(self) -> Dict[str, KafkaPartition]:
 
@@ -742,8 +742,10 @@ class KafkaManager():
 							kafka_broker = KafkaBroker(
 								kafka_wrapper=self.__kafka_wrapper,
 								kafka_broker_id=kafka_broker_id,
-								host_url=topic_list.brokers[kafka_broker_id].host,
-								host_port=topic_list.brokers[kafka_broker_id].port
+								host_pointer=HostPointer(
+									host_address=topic_list.brokers[kafka_broker_id].host,
+									host_port=topic_list.brokers[kafka_broker_id].port
+								)
 							)
 							kafka_brokers.append(kafka_broker)
 			return kafka_brokers

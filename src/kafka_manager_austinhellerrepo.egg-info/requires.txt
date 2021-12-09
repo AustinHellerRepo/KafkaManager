@@ -1,1 +1,3 @@
 confluent-kafka
+threading-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Threading
+common-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Common
