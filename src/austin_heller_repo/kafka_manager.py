@@ -449,6 +449,9 @@ class KafkaReader():
 			if message is not None:
 				message_bytes = message.value()
 
+				if self.__is_debug:
+					print(f"{datetime.utcnow()}: KafkaReader: read_message: returning message")
+
 				return KafkaMessage(
 					message_bytes=message_bytes,
 					partition_index=message.partition(),
@@ -456,10 +459,17 @@ class KafkaReader():
 					topic_name=self.__topic_name
 				)
 			else:
+
+				if self.__is_debug:
+					print(f"{datetime.utcnow()}: KafkaReader: read_message: returning nothing")
+
 				return None
 
 		async_handle = AsyncHandle(
 			get_result_method=get_result_method
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
 		)
 
 		return async_handle
