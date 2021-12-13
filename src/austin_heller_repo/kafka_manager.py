@@ -432,38 +432,48 @@ class KafkaReader():
 
 		def get_result_method(read_only_async_handle: ReadOnlyAsyncHandle) -> KafkaMessage:
 
-			message = None  # type: Message
+			try:
+				message = None  # type: Message
 
-			while message is None and not read_only_async_handle.is_cancelled():
-				message = self.__consumer.poll(self.__read_polling_seconds)
-				if self.__is_debug:
-					print(f"{datetime.utcnow()}: KafkaReader: read_message: consumer poll: {message}")
-				if not read_only_async_handle.is_cancelled():
-					if message is not None:
-						message_error = message.error()
-						if message_error is not None:
-							raise ReadMessageException(message_error)
+				while message is None and not read_only_async_handle.is_cancelled():
+					message = self.__consumer.poll(self.__read_polling_seconds)
+					if self.__is_debug:
+						print(f"{datetime.utcnow()}: KafkaReader: read_message: consumer poll: {message}")
+					if not read_only_async_handle.is_cancelled():
+						if message is not None:
+							if self.__is_debug:
+								print(f"{datetime.utcnow()}: KafkaReader: read_message: found message")
+							message_error = message.error()
+							if message_error is not None:
+								if self.__is_debug:
+									print(f"{datetime.utcnow()}: KafkaReader: read_message: is error: {message_error}")
+								raise ReadMessageException(message_error)
+					else:
+						message = None
+
+				if message is not None:
+
+					if self.__is_debug:
+						print(f"{datetime.utcnow()}: KafkaReader: read_message: returning message")
+
+					message_bytes = message.value()
+
+					return KafkaMessage(
+						message_bytes=message_bytes,
+						partition_index=message.partition(),
+						offset=message.offset(),
+						topic_name=self.__topic_name
+					)
 				else:
-					message = None
 
-			if message is not None:
-				message_bytes = message.value()
+					if self.__is_debug:
+						print(f"{datetime.utcnow()}: KafkaReader: read_message: returning nothing")
 
+					return None
+			except Exception as ex:
 				if self.__is_debug:
-					print(f"{datetime.utcnow()}: KafkaReader: read_message: returning message")
-
-				return KafkaMessage(
-					message_bytes=message_bytes,
-					partition_index=message.partition(),
-					offset=message.offset(),
-					topic_name=self.__topic_name
-				)
-			else:
-
-				if self.__is_debug:
-					print(f"{datetime.utcnow()}: KafkaReader: read_message: returning nothing")
-
-				return None
+					print(f"{datetime.utcnow()}: KafkaReader: read_message: ex: {ex}")
+				raise ex
 
 		async_handle = AsyncHandle(
 			get_result_method=get_result_method
