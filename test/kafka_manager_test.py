@@ -1,6 +1,7 @@
 import unittest
 from src.austin_heller_repo.kafka_manager import KafkaManager, KafkaReader, KafkaWrapper, KafkaTopicSeekIndex, KafkaMessage, KafkaAsyncWriter, KafkaTransactionalWriter
 from austin_heller_repo.threading import start_thread, Semaphore, BooleanReference, AsyncHandle
+from austin_heller_repo.common import HostPointer
 import uuid
 import time
 from datetime import datetime
@@ -12,8 +13,10 @@ import matplotlib
 def get_default_kafka_manager() -> KafkaManager:
 
 	kafka_wrapper = KafkaWrapper(
-		host_url="0.0.0.0",
-		host_port=9092
+		host_pointer=HostPointer(
+			host_address="0.0.0.0",
+			host_port=9092
+		)
 	)
 
 	kafka_manager = KafkaManager(
@@ -1191,3 +1194,102 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Max: {max(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(max(write_start_to_read_end_time_seconds))} which is {1.0 / max(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
+
+	def test_read_from_topic_before_writing(self):
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=KafkaWrapper(
+				host_pointer=HostPointer(
+					host_address="0.0.0.0",
+					host_port=9092
+				)
+			),
+			read_polling_seconds=0.1,
+			is_cancelled_polling_seconds=0.1,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
+		)
+
+		kafka_topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=kafka_topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=kafka_topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+		def read_thread_method():
+			nonlocal kafka_reader
+			for index in range(10):
+				message = kafka_reader.read_message().get_result()  # type: KafkaMessage
+				self.assertEqual(str(index).encode(), message.get_message_bytes())
+
+		def write_thread_method():
+			nonlocal kafka_writer
+			for index in range(10):
+				kafka_writer.write_message(
+					topic_name=kafka_topic_name,
+					message_bytes=str(index).encode()
+				).get_result()
+
+		read_thread = start_thread(read_thread_method)
+
+		time.sleep(1)
+
+		write_thread = start_thread(write_thread_method)
+		write_thread.join()
+
+		read_thread.join()
+
+	def test_read_from_topic_after_writing(self):
+
+		kafka_manager = KafkaManager(
+			kafka_wrapper=KafkaWrapper(
+				host_pointer=HostPointer(
+					host_address="0.0.0.0",
+					host_port=9092
+				)
+			),
+			read_polling_seconds=0.1,
+			is_cancelled_polling_seconds=0.1,
+			new_topic_partitions_total=1,
+			new_topic_replication_factor=1,
+			remove_topic_cluster_propagation_blocking_timeout_seconds=30
+		)
+
+		kafka_topic_name = str(uuid.uuid4())
+
+		kafka_manager.add_topic(
+			topic_name=kafka_topic_name
+		).get_result()
+
+		kafka_reader = kafka_manager.get_reader(
+			topic_name=kafka_topic_name,
+			is_from_beginning=True
+		).get_result()  # type: KafkaReader
+
+		kafka_writer = kafka_manager.get_async_writer().get_result()  # type: KafkaAsyncWriter
+		def read_thread_method():
+			nonlocal kafka_reader
+			for index in range(10):
+				message = kafka_reader.read_message().get_result()  # type: KafkaMessage
+				self.assertEqual(str(index).encode(), message.get_message_bytes())
+
+		def write_thread_method():
+			nonlocal kafka_writer
+			for index in range(10):
+				kafka_writer.write_message(
+					topic_name=kafka_topic_name,
+					message_bytes=str(index).encode()
+				).get_result()
+
+		write_thread = start_thread(write_thread_method)
+		write_thread.join()
+
+		read_thread = start_thread(read_thread_method)
+		read_thread.join()

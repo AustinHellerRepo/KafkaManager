@@ -308,11 +308,12 @@ class KafkaTransactionalWriter():
 
 class KafkaReader():
 
-	def __init__(self, *, consumer: Consumer, read_polling_seconds: float, topic_name: str):
+	def __init__(self, *, consumer: Consumer, read_polling_seconds: float, topic_name: str, is_debug: bool = False):
 
 		self.__consumer = consumer
 		self.__read_polling_seconds = read_polling_seconds
 		self.__topic_name = topic_name
+		self.__is_debug = is_debug
 
 		self.__topic_partitions = self.__consumer.assignment()  # type: List[TopicPartition]
 		if len(self.__topic_partitions) == 0:
@@ -435,6 +436,8 @@ class KafkaReader():
 
 			while message is None and not read_only_async_handle.is_cancelled():
 				message = self.__consumer.poll(self.__read_polling_seconds)
+				if self.__is_debug:
+					print(f"{datetime.utcnow()}: KafkaReader: read_message: consumer poll: {message}")
 				if not read_only_async_handle.is_cancelled():
 					if message is not None:
 						message_error = message.error()
@@ -563,7 +566,7 @@ class KafkaBroker():
 
 class KafkaManager():
 
-	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int, is_debug: bool = False):
 
 		self.__kafka_wrapper = kafka_wrapper
 		self.__read_polling_seconds = read_polling_seconds
@@ -571,6 +574,7 @@ class KafkaManager():
 		self.__new_topic_partitions_total = new_topic_partitions_total
 		self.__new_topic_replication_factor = new_topic_replication_factor
 		self.__remove_topic_cluster_propagation_blocking_timeout_seconds = remove_topic_cluster_propagation_blocking_timeout_seconds
+		self.__is_debug = is_debug
 
 	def add_topic(self, *, topic_name: str) -> AsyncHandle:
 
@@ -822,7 +826,8 @@ class KafkaManager():
 				kafka_reader = KafkaReader(
 					consumer=consumer,
 					read_polling_seconds=self.__read_polling_seconds,
-					topic_name=topic_name
+					topic_name=topic_name,
+					is_debug=self.__is_debug
 				)
 
 			return kafka_reader
@@ -917,7 +922,7 @@ class KafkaManager():
 
 class KafkaManagerFactory():
 
-	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int):
+	def __init__(self, *, kafka_wrapper: KafkaWrapper, read_polling_seconds: float, is_cancelled_polling_seconds: float, new_topic_partitions_total: int, new_topic_replication_factor: int, remove_topic_cluster_propagation_blocking_timeout_seconds: int, is_debug: bool = False):
 
 		self.__kafka_wrapper = kafka_wrapper
 		self.__read_polling_seconds = read_polling_seconds
@@ -925,6 +930,7 @@ class KafkaManagerFactory():
 		self.__new_topic_partitions_total = new_topic_partitions_total
 		self.__new_topic_replication_factor = new_topic_replication_factor
 		self.__remove_topic_cluster_propagation_blocking_timeout_seconds = remove_topic_cluster_propagation_blocking_timeout_seconds
+		self.__is_debug = is_debug
 
 	def get_kafka_manager(self) -> KafkaManager:
 
@@ -934,5 +940,6 @@ class KafkaManagerFactory():
 			is_cancelled_polling_seconds=self.__is_cancelled_polling_seconds,
 			new_topic_partitions_total=self.__new_topic_partitions_total,
 			new_topic_replication_factor=self.__new_topic_replication_factor,
-			remove_topic_cluster_propagation_blocking_timeout_seconds=self.__remove_topic_cluster_propagation_blocking_timeout_seconds
+			remove_topic_cluster_propagation_blocking_timeout_seconds=self.__remove_topic_cluster_propagation_blocking_timeout_seconds,
+			is_debug=self.__is_debug
 		)
