@@ -3,7 +3,7 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition, OFFSET_BEGINNING, OFFSET_END
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
-from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle
+from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle, SequentialQueue, SequentialQueueReader, SequentialQueueWriter
 from austin_heller_repo.common import HostPointer
 import uuid
 import random
@@ -963,3 +963,131 @@ class KafkaManagerFactory():
 			remove_topic_cluster_propagation_blocking_timeout_seconds=self.__remove_topic_cluster_propagation_blocking_timeout_seconds,
 			is_debug=self.__is_debug
 		)
+
+
+class KafkaSequentialQueueWriter(SequentialQueueWriter):
+
+	def __init__(self, *, kafka_writer: KafkaAsyncWriter, kafka_topic_name: str):
+		super().__init__()
+
+		self.__kafka_writer = kafka_writer
+		self.__kafka_topic_name = kafka_topic_name
+
+	def __write_bytes(self, read_only_async_handle: ReadOnlyAsyncHandle, message_bytes: bytes):
+
+		if not read_only_async_handle.is_cancelled():
+			write_message_async_handle = self.__kafka_writer.write_message(
+				topic_name=self.__kafka_topic_name,
+				message_bytes=message_bytes
+			)
+			write_message_async_handle.add_parent(
+				async_handle=read_only_async_handle
+			)
+			write_message_async_handle.get_result()
+
+	def write_bytes(self, *, message_bytes) -> AsyncHandle:
+
+		async_handle = AsyncHandle(
+			get_result_method=self.__write_bytes,
+			message_bytes=message_bytes
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
+
+
+class KafkaSequentialQueueReader(SequentialQueueReader):
+
+	def __init__(self, *, kafka_reader: KafkaReader):
+		super().__init__()
+
+		self.__kafka_reader = kafka_reader
+
+	def __read_bytes(self, read_only_async_handle: ReadOnlyAsyncHandle) -> bytes:
+
+		if not read_only_async_handle.is_cancelled():
+			read_message_async_handle = self.__kafka_reader.read_message()
+			read_message_async_handle.add_parent(
+				async_handle=read_only_async_handle
+			)
+			kafka_message = read_message_async_handle.get_result()  # type: KafkaMessage
+			return kafka_message.get_message_bytes()
+
+	def read_bytes(self) -> AsyncHandle:
+
+		async_handle = AsyncHandle(
+			get_result_method=self.__read_bytes
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
+
+
+class KafkaSequentialQueue(SequentialQueue):
+
+	def __init__(self, *, kafka_manager: KafkaManager, kafka_topic_name: str):
+		super().__init__()
+
+		self.__kafka_manager = kafka_manager
+		self.__kafka_topic_name = kafka_topic_name
+
+	def __get_writer(self, read_only_async_handle: ReadOnlyAsyncHandle):
+
+		kafka_writer_async_handle = self.__kafka_manager.get_async_writer()
+		kafka_writer_async_handle.add_parent(
+			async_handle=read_only_async_handle
+		)
+		kafka_writer = kafka_writer_async_handle.get_result()  # type: KafkaAsyncWriter
+		return KafkaSequentialQueueWriter(
+			kafka_writer=kafka_writer,
+			kafka_topic_name=self.__kafka_topic_name
+		)
+
+	def __get_reader(self, read_only_async_handle: ReadOnlyAsyncHandle):
+
+		kafka_reader_async_handle = self.__kafka_manager.get_reader(
+			topic_name=self.__kafka_topic_name,
+			is_from_beginning=True
+		)
+		kafka_reader_async_handle.add_parent(
+			async_handle=read_only_async_handle
+		)
+		kafka_reader = kafka_reader_async_handle.get_result()  # type: KafkaReader
+		return KafkaSequentialQueueReader(
+			kafka_reader=kafka_reader
+		)
+
+	def get_writer(self) -> AsyncHandle:
+
+		async_handle = AsyncHandle(
+			get_result_method=self.__get_writer
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
+
+	def get_reader(self) -> AsyncHandle:
+
+		async_handle = AsyncHandle(
+			get_result_method=self.__get_reader
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle
+
+	def __dispose(self, read_only_async_handle: ReadOnlyAsyncHandle):
+		pass
+
+	def dispose(self) -> AsyncHandle:
+
+		async_handle = AsyncHandle(
+			get_result_method=self.__dispose
+		)
+		async_handle.try_wait(
+			timeout_seconds=0
+		)
+		return async_handle

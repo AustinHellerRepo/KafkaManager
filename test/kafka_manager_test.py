@@ -65,6 +65,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertIsNotNone(kafka_manager)
 
+		time.sleep(1)
+
 	def test_list_all_topics(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -74,6 +76,8 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"topics: {topics}")
 
 		self.assertEqual((), topics)
+
+		time.sleep(1)
 
 	def test_add_and_remove_topic(self):
 
@@ -102,6 +106,8 @@ class KafkaManagerTest(unittest.TestCase):
 		topics = kafka_manager.get_topics().get_result()
 
 		self.assertEqual((), topics)
+
+		time.sleep(1)
 
 	def test_write_and_read_transactional_once(self):
 
@@ -135,6 +141,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual(expected_message_bytes, write_message.get_message_bytes())
 		self.assertEqual(expected_message_bytes, read_message.get_message_bytes())
+
+		time.sleep(1)
 
 	def TODO__test_write_and_read_from_topic_transactional(self):
 
@@ -362,6 +370,8 @@ class KafkaManagerTest(unittest.TestCase):
 		for read_message in read_messages:
 			self.assertIn(read_message, expected_messages)
 
+		time.sleep(1)
+
 	def test_async_handle_wait(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -430,6 +440,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertEqual((), topics)
 
+		time.sleep(1)
+
 	def test_write_one_message_read_until_end(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -474,6 +486,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		self.assertIsNone(second_message)
 		self.assertFalse(second_message_async_handle.is_cancelled())
+
+		time.sleep(1)
 
 	def test_write_and_read_from_topic_async_everything_async(self):
 
@@ -589,6 +603,8 @@ class KafkaManagerTest(unittest.TestCase):
 		for read_message in read_messages:
 			self.assertIn(read_message, expected_messages)
 
+		time.sleep(1)
+
 	def test_write_and_read_from_topic_async_everything_sync(self):
 
 		messages_total = 1000
@@ -688,6 +704,8 @@ class KafkaManagerTest(unittest.TestCase):
 		for read_message in read_messages:
 			self.assertIn(read_message, expected_messages)
 
+		time.sleep(1)
+
 	def test_read_first_and_read_last(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -744,6 +762,8 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"fourth_message: {fourth_message}")
 		self.assertEqual(b"fourth", fourth_message.get_message_bytes())
 
+		time.sleep(1)
+
 	def test_read_message_then_reset_to_message_seek_index_and_read_again(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -788,6 +808,8 @@ class KafkaManagerTest(unittest.TestCase):
 		self.assertEqual(written_kafka_message.get_topic_name(), read_message.get_topic_name())
 		self.assertEqual(written_kafka_message.get_offset(), read_message.get_offset())
 		self.assertEqual(written_kafka_message.get_partition_index(), read_message.get_partition_index())
+
+		time.sleep(1)
 
 	def test_read_write_efficiency_sequential_sync(self):
 
@@ -842,6 +864,8 @@ class KafkaManagerTest(unittest.TestCase):
 		reads.remove(min(reads))
 		print(f"Ave: {sum(reads)/len(reads)} which is {1.0/(sum(reads)/len(reads))} in a second")
 
+		time.sleep(1)
+
 	def test_read_write_efficiency_write_then_read(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -889,6 +913,8 @@ class KafkaManagerTest(unittest.TestCase):
 		reads.remove(min(reads))
 		print(f"Ave: {sum(reads)/len(reads)} which is {1.0/(sum(reads)/len(reads))} in a second")
 
+		time.sleep(1)
+
 	def test_read_write_efficiency_1KB(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -923,6 +949,8 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
 		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
 
+		time.sleep(1)
+
 	def test_read_write_efficiency_10KB(self):
 
 		kafka_manager = get_default_kafka_manager()
@@ -956,6 +984,8 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Max: {max(trials)} at {trials.index(max(trials))} which is {1.0/max(trials)} in a second")
 		print(f"Min: {min(trials)} at {trials.index(min(trials))} which is {1.0/min(trials)} in a second")
 		print(f"Ave: {sum(trials)/len(trials)} which is {1.0/(sum(trials)/len(trials))} in a second")
+
+		time.sleep(1)
 
 	def test_parallel_write_and_read_efficiency(self):
 
@@ -1054,7 +1084,7 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
 
-		if False:
+		if True:
 			write_time_seconds.remove(max(write_time_seconds))
 			plt.scatter(write_time_seconds, list(range(len(write_time_seconds))), c="blue", s=1)
 			plt.scatter(read_time_seconds, list(range(len(read_time_seconds))), c="red", s=1)
@@ -1068,6 +1098,8 @@ class KafkaManagerTest(unittest.TestCase):
 			plt.scatter(read_end_times, list(range(len(read_end_times))), c="purple", s=1)
 			plt.gcf().autofmt_xdate()
 			plt.show()
+
+		time.sleep(1)
 
 	def test_parallel_write_and_read_efficiency_multiple_writers(self):
 
@@ -1195,6 +1227,8 @@ class KafkaManagerTest(unittest.TestCase):
 		print(f"Min: {min(write_start_to_read_end_time_seconds)} at {write_start_to_read_end_time_seconds.index(min(write_start_to_read_end_time_seconds))} which is {1.0 / min(write_start_to_read_end_time_seconds)} in a second")
 		print(f"Ave: {sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds)} which is {1.0 / (sum(write_start_to_read_end_time_seconds) / len(write_start_to_read_end_time_seconds))} in a second")
 
+		time.sleep(1)
+
 	def test_read_from_topic_before_writing(self):
 
 		kafka_manager = KafkaManager(
@@ -1246,6 +1280,8 @@ class KafkaManagerTest(unittest.TestCase):
 
 		read_thread.join()
 
+		time.sleep(1)
+
 	def test_read_from_topic_after_writing(self):
 
 		kafka_manager = KafkaManager(
@@ -1293,3 +1329,5 @@ class KafkaManagerTest(unittest.TestCase):
 
 		read_thread = start_thread(read_thread_method)
 		read_thread.join()
+
+		time.sleep(1)
