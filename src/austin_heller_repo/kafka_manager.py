@@ -3,7 +3,7 @@ from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka import Producer, Consumer, Message, KafkaError, TopicPartition, OFFSET_BEGINNING, OFFSET_END
 from concurrent.futures import Future
 from typing import List, Tuple, Dict, Callable
-from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle, SequentialQueue, SequentialQueueReader, SequentialQueueWriter, SequentialQueueFactory
+from austin_heller_repo.threading import Semaphore, TimeoutThread, BooleanReference, start_thread, AsyncHandle, ReadOnlyAsyncHandle, SequentialQueue, SequentialQueueReader, SequentialQueueWriter, SequentialQueueFactory, ConstantAsyncHandle
 from austin_heller_repo.common import HostPointer
 import uuid
 import random
@@ -996,6 +996,13 @@ class KafkaSequentialQueueWriter(SequentialQueueWriter):
 		)
 		return async_handle
 
+	def dispose(self) -> ConstantAsyncHandle:
+		self.__kafka_writer = None
+		self.__kafka_topic_name = None
+		return ConstantAsyncHandle(
+			result=None
+		)
+
 
 class KafkaSequentialQueueReader(SequentialQueueReader):
 
@@ -1023,6 +1030,12 @@ class KafkaSequentialQueueReader(SequentialQueueReader):
 			timeout_seconds=0
 		)
 		return async_handle
+
+	def dispose(self) -> ConstantAsyncHandle:
+		self.__kafka_reader = None
+		return ConstantAsyncHandle(
+			result=None
+		)
 
 
 class KafkaSequentialQueue(SequentialQueue):
